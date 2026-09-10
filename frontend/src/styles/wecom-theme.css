@@ -1,0 +1,194 @@
+/* WeCom-native collaborative theme (pure visual layer).
+ * Imported in src/main.ts AFTER 'element-plus/dist/index.css' so these
+ * Element Plus CSS vars + targeted overrides win. No logic changes. */
+
+:root {
+  /* ---- brand tokens (exact WeChat/WeCom palette) ---- */
+  --el-color-primary: #0082ef;
+  --el-color-primary-light-3: #4da8f4;
+  --el-color-primary-light-5: #80c1f7;
+  --el-color-primary-light-7: #b3dafa;
+  --el-color-primary-light-8: #cce6fc;
+  --el-color-primary-light-9: #e6f3fd;
+  --el-color-primary-dark-2: #0068bf;
+  --el-color-success: #07c160;
+  --el-color-success-light-3: #51d490;
+  --el-color-success-light-5: #83e0b0;
+  --el-color-success-light-7: #b5eccf;
+  --el-color-success-light-8: #cdf3df;
+  --el-color-success-light-9: #e6f9ef;
+  --el-color-success-dark-2: #069a4d;
+  --el-color-warning: #fa9d3b;
+  --el-color-warning-light-3: #fcba76;
+  --el-color-warning-light-5: #fdce9d;
+  --el-color-warning-light-7: #fee2c4;
+  --el-color-warning-light-8: #feebd8;
+  --el-color-warning-light-9: #fff5eb;
+  --el-color-warning-dark-2: #c87e2f;
+  --el-color-danger: #fa5151;
+  --el-color-danger-light-3: #fc8585;
+  --el-color-danger-light-5: #fda8a8;
+  --el-color-danger-light-7: #fecbcb;
+  --el-color-danger-light-8: #fedcdc;
+  --el-color-danger-light-9: #ffeeee;
+  --el-color-danger-dark-2: #c84141;
+  --el-color-info: #8a94a6;
+  --el-color-info-light-3: #adb4c1;
+  --el-color-info-light-5: #c5cad3;
+  --el-color-info-light-7: #dcdfe4;
+  --el-color-info-light-8: #e8eaed;
+  --el-color-info-light-9: #f3f4f6;
+  --el-color-info-dark-2: #6e7685;
+  --el-text-color-regular: #2b3442;
+  --el-text-color-secondary: #8a94a6;
+  --el-border-color: #e7e7e7;
+  --el-border-color-lighter: #eceef1;
+  --el-bg-color-page: #f2f3f5;
+}
+
+/* ---- page ---- */
+body {
+  background: #f2f3f5;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+}
+#app {
+  background: #f2f3f5;
+  min-height: 100vh;
+}
+.el-main {
+  background: #f2f3f5;
+}
+
+/* ---- cards ---- */
+.el-card {
+  background: #fff;
+  border: none;
+  border-radius: 12px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+.el-card__header {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+/* ---- top bars (global; scoped .bar duplicates stay, harmless) ---- */
+.el-header.bar,
+.el-header {
+  background: #fff;
+  border-bottom: 1px solid #e7e7e7;
+}
+.el-header.bar > span:first-child {
+  font-size: 16px;
+  font-weight: 600;
+}
+.el-header.bar .user,
+.el-header .user {
+  color: #8a94a6;
+}
+
+/* ---- tables ---- */
+.el-table th.el-table__cell {
+  background: #fafafa;
+  font-size: 13px;
+  color: #5b6b7f;
+  font-weight: 600;
+}
+.el-table td.el-table__cell {
+  padding: 10px 0;
+}
+.el-table--enable-row-hover .el-table__body tr:hover > td.el-table__cell {
+  background: #f0f7ff;
+}
+.el-table a,
+a {
+  color: #576b95;
+}
+.el-table a:hover,
+a:hover {
+  color: #0082ef;
+}
+/* orphan-row tint (OpsPool) is intentional domain cue — keep, only soften hover on it */
+.el-table tr.orphan-row > td.el-table__cell {
+  background-color: #fff7e6;
+}
+.el-table--enable-row-hover .el-table__body tr.orphan-row:hover > td.el-table__cell {
+  background-color: #fff3d9;
+}
+
+/* ---- tags ---- */
+.el-tag--small {
+  border-radius: 6px;
+  font-weight: 500;
+}
+
+/* ---- buttons ---- */
+.el-button {
+  border-radius: 8px;
+}
+
+/* ---- dialogs ---- */
+.el-dialog {
+  border-radius: 12px;
+}
+
+/* ---- tabs (OpsPool lanes) ---- */
+.el-tabs__item.is-active {
+  color: #0082ef;
+}
+.el-tabs__active-bar {
+  background-color: #0082ef;
+}
+
+/* ---- pagination (active page follows primary; explicit for safety) ---- */
+.el-pagination.is-background .el-pager li.is-active {
+  background-color: #0082ef;
+  color: #fff;
+}
+.el-pager li.is-active {
+  color: #0082ef;
+}
+
+/* ---- switches / success accents follow --el-color-success automatically ---- */
+
+/* ---- login (QR-first layout untouched; align surfaces to tokens) ---- */
+.login-page {
+  background: #f2f3f5;
+}
+.login-page .el-card {
+  border-radius: 16px;
+}
+.login-page .qr-box {
+  border: 1px dashed #e7e7e7;
+  border-radius: 12px;
+  background: #fafafa;
+  color: #8a94a6;
+}
+.login-page .hint {
+  color: #8a94a6;
+}
+.login-page .el-input__wrapper {
+  border-radius: 8px;
+}
+
+/* ---- dashboard stat bars (component-scoped defaults predate theme; align tones) ---- */
+.stat-bars .bar-track {
+  background: #f2f3f5;
+}
+.stat-bars .bar-fill {
+  background: #0082ef;
+}
+.stat-bars .bar-fill.danger {
+  background: #fa5151;
+}
+.stat-bars .bar-fill.warning {
+  background: #fa9d3b;
+}
+.stat-bars .bar-fill.success {
+  background: #07c160;
+}
+.stat-bars .bar-fill.info {
+  background: #8a94a6;
+}
+.stat-bars .bar-label {
+  color: #8a94a6;
+}

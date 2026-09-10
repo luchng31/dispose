@@ -1,0 +1,2 @@
+# Watcher deps: stdlib-first, only requests is external (pinned).
+requests==2.32.3

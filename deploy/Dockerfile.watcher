@@ -1,0 +1,22 @@
+# Watcher image: stdlib-first watch.py + pinned requests (python:3.12-slim).
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /srv/watcher
+COPY watcher/requirements.txt /srv/watcher/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && groupadd -r appgroup --gid 10001 \
+    && useradd -r --uid 10001 -g appgroup --no-create-home -s /usr/sbin/nologin appuser \
+    && mkdir -p /state \
+    && chown -R appuser:appgroup /srv/watcher /state
+COPY watcher/watch.py /srv/watcher/watch.py
+RUN chown appuser:appgroup /srv/watcher/watch.py
+
+# Least privilege: watch.py only reads /rsas-drop (mounted :ro) and writes
+# the seen-state under /state, so it runs as unprivileged appuser.
+USER appuser
+
+CMD ["python", "/srv/watcher/watch.py"]

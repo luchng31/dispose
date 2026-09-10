@@ -1,0 +1,22 @@
+# FTP image: stock vsftpd on debian:12-slim driven by ../vsftpd.conf.
+# (vsftpd itself is GPLv2 — noted in README; no other GPL components added.)
+FROM debian:12-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends vsftpd \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY vsftpd.conf /etc/vsftpd.conf.template
+COPY ftp-entrypoint.sh /usr/local/bin/ftp-entrypoint.sh
+RUN chmod +x /usr/local/bin/ftp-entrypoint.sh
+
+EXPOSE 21 40000-40100
+VOLUME ["/rsas-drop"]
+
+# SECURITY EXCEPTION (intentional, documented): this image keeps root as the
+# runtime user — no USER switch. ftp-entrypoint.sh must start as root: it
+# binds privileged port 21, creates the RSAS account at boot
+# (groupadd/useradd/chpasswd), writes /etc/vsftpd.conf +
+# /etc/vsftpd.userlist, and chowns /rsas-drop. vsftpd itself still isolates
+# each FTP session in an unprivileged process chrooted to /rsas-drop.
+ENTRYPOINT ["/usr/local/bin/ftp-entrypoint.sh"]

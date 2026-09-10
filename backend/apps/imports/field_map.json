@@ -1,0 +1,26 @@
+{
+  "version": "2",
+  "description": "RSAS report field aliases -> canonical finding keys. Unknown fields are quarantined per-row, never crash the batch.",
+  "aliases": {
+    "ip": ["ip", "host", "主机", "主机ip", "ip地址", "asset_ip"],
+    "port": ["port", "端口", "portid"],
+    "protocol": ["protocol", "协议"],
+    "service": ["service", "服务", "port_service"],
+    "plugin_id": ["plugin_id", "pluginid", "插件id", "插件编号", "vid", "vuln_id", "vul_id"],
+    "plugin_name": ["title", "plugin_name", "漏洞名称", "名称", "name", "vuln_name"],
+    "cve": ["cve", "cve编号", "cve_id"],
+    "severity": ["severity", "危险程度", "风险等级", "level", "威胁等级"],
+    "cvss": ["cvss", "cvss分值", "cvss_score", "risk_points"],
+    "description": ["description", "漏洞描述", "描述", "detail"],
+    "solution": ["solution", "修复方案", "解决方案", "suggestion"]
+  },
+  "severity_map": {
+    "危急": "严重", "极危": "严重", "严重": "严重", "critical": "严重", "crit": "严重",
+    "高危": "高", "高": "高", "high": "高",
+    "中危": "中", "中": "中", "medium": "中", "middle": "中",
+    "低危": "低", "低": "低", "low": "低",
+    "信息": "低", "info": "低", "informational": "低"
+  },
+  "defaults": {"port": 0, "protocol": "tcp", "cve": "NOCVE", "severity": "中"},
+  "unknown_policy": "quarantine"
+}

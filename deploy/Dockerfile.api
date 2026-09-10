@@ -1,0 +1,35 @@
+# API/worker/beat image: backend + gunicorn (minimal image count — one build,
+# three commands). Base python:3.12-slim (Debian, PSF-licensed).
+#
+# NOTE: backend/requirements.txt does NOT ship gunicorn, so it is pinned
+# here (23.0.0). requirements.txt itself is intentionally untouched.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /srv/app
+
+COPY backend/requirements.txt /srv/app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt gunicorn==23.0.0 \
+    && groupadd -r appgroup --gid 10001 \
+    && useradd -r --uid 10001 -g appgroup --no-create-home -s /usr/sbin/nologin appuser \
+    && mkdir -p /srv/app/media /srv/app/staticfiles /var/lib/cmdb \
+    && chown -R appuser:appgroup /srv/app /var/lib/cmdb
+
+COPY backend/ /srv/app/
+RUN chown -R appuser:appgroup /srv/app
+
+EXPOSE 8000
+
+# Least privilege: gunicorn/celery bind only unprivileged ports (8000) and
+# write only to /srv/app (+media/staticfiles) and /var/lib/cmdb, so the
+# runtime user is the unprivileged appuser created above.
+USER appuser
+
+# Applied at first boot by the operator (or entrypoint-less manual step):
+#   python manage.py migrate && python manage.py collectstatic (once backend
+#   defines STATIC_ROOT) && python manage.py createsuperuser
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", \
+     "--workers", "3", "--timeout", "300", "--access-logfile", "-"]

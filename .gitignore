@@ -1,0 +1,57 @@
+# ---- Python / Django ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage/
+htmlcov/
+celerybeat-schedule*
+*.sqlite3
+backend/media/
+backend/staticfiles/
+
+# ---- Node / 前端 ----
+node_modules/
+frontend/dist/
+*.local
+
+# ---- 密钥与环境（.env.example 白名单保留）----
+.env
+.env.*
+!.env.example
+!/deploy/.env.example
+
+# ---- 运行时业务数据（真实数据不入仓库）----
+服务器资源汇总表.xlsx
+77_扫描*
+*_xml/
+*_xml.zip
+
+# ---- 日志 / 进程 ----
+*.log
+nohup.out
+*.pid
+
+# ---- 编辑器 / OS ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ---- AI / 工具元数据 ----
+.codegraph
+.omo/
+.opencode/
+.claude/
+
+# ---- 备份 ----
+*.bak
+*.orig

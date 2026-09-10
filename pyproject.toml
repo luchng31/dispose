@@ -1,0 +1,37 @@
+[project]
+name = "vuln-ticket-backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "N", "W", "C90", "DTZ", "RUF100", "TID252"]
+ignore = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["config", "apps"]
+
+[tool.ruff.lint.per-file-ignores]
+"backend/**/migrations/*.py" = ["E501"]
+"backend/apps/cmdb/models.py" = ["F401"]
+"backend/apps/cmdb/admin.py" = ["F401"]
+
+[tool.basedpyright]
+typeCheckingMode = "all"
+pythonVersion = "3.12"
+extraPaths = ["backend"]
+reportMissingImports = true
+reportMissingTypeStubs = true
+reportAny = true
+reportExplicitAny = true
+reportIgnoreCommentWithoutRule = true
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+pythonpath = ["backend"]
+testpaths = ["backend"]
+django_find_project = false

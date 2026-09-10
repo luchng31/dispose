@@ -1,0 +1,26 @@
+# Web image: build frontend, serve via nginx (chosen approach: multi-stage
+# in-image build of ../frontend; do NOT commit dist/. No build args needed —
+# frontend/src/api/client.ts reads VITE_API_BASE at runtime, same-origin
+# /api by default behind this nginx).
+#
+# Stage 1 base: node:20-bookworm-slim. Stage 2: nginx:1.27-alpine (BSD-2).
+# nginx.conf is ALSO mounted read-only by compose for tweak-without-rebuild;
+# the baked-in copy below is the fallback when run outside compose.
+FROM node:20-bookworm-slim AS frontend-build
+WORKDIR /src/frontend
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+FROM nginx:1.27-alpine
+# SECURITY EXCEPTION (intentional, documented): final stage keeps root — no
+# USER switch. nginx must bind privileged port 80 (compose publishes
+# ${WEB_HTTP_PORT:-80}:80; ports/topology are out of scope), which fails as
+# an unprivileged user. The master process stays root but worker processes
+# already run as the unprivileged `nginx` user; nginx.conf is mounted :ro
+# and media is mounted :ro, so nothing writable needs a chown here.
+COPY --from=frontend-build /src/frontend/dist /usr/share/nginx/html
+COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]

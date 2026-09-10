@@ -1,0 +1,228 @@
+# Task9 deploy unit: single-host Compose for the vuln-ticket system (Wave4).
+# LAN: Django/gunicorn + Celery worker + beat + PG16 + Redis, frontend static
+# via nginx, RSAS FTP drop path (vsftpd) + watcher -> import API.
+#
+# All secrets come from ${VAR} in an untracked .env (see .env.example).
+# NEVER commit .env, dist/, or real credentials.
+
+name: vuln-ticket
+
+services:
+  db:
+    image: postgres:16-bookworm
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vulntickets}
+      POSTGRES_USER: ${POSTGRES_USER:-vuln}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-vuln} -d $${POSTGRES_DB:-vulntickets}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks: [backend]
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [backend]
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?set DJANGO_SECRET_KEY in .env}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:?set DJANGO_ALLOWED_HOSTS in .env (e.g. vuln.internal.example.com)}
+      POSTGRES_DB: ${POSTGRES_DB:-vulntickets}
+      POSTGRES_USER: ${POSTGRES_USER:-vuln}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      CELERY_TIMEZONE: ${CELERY_TIMEZONE:-Asia/Shanghai}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ACCESS_MINUTES: ${JWT_ACCESS_MINUTES:-60}
+      JWT_REFRESH_DAYS: ${JWT_REFRESH_DAYS:-7}
+      CMDB_BASE_URL: ${CMDB_BASE_URL:-}
+      CMDB_TOKEN: ${CMDB_TOKEN:-}
+      CMDB_CURSOR_FILE: /var/lib/cmdb/updated_since
+      WECOM_CORPID: ${WECOM_CORPID:-}
+      WECOM_SECRET: ${WECOM_SECRET:-}
+    volumes:
+      - cmdb-cursor:/var/lib/cmdb
+      - media-data:/srv/app/media
+    networks: [backend]
+    # No published ports: nginx (web) is the only ingress.
+
+  worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    restart: always
+    command: celery -A config worker --loglevel=${CELERY_LOGLEVEL:-INFO} --concurrency=${CELERY_CONCURRENCY:-2}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?set DJANGO_SECRET_KEY in .env}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:?set DJANGO_ALLOWED_HOSTS in .env (e.g. vuln.internal.example.com)}
+      POSTGRES_DB: ${POSTGRES_DB:-vulntickets}
+      POSTGRES_USER: ${POSTGRES_USER:-vuln}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      CELERY_TIMEZONE: ${CELERY_TIMEZONE:-Asia/Shanghai}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env}
+      CMDB_BASE_URL: ${CMDB_BASE_URL:-}
+      CMDB_TOKEN: ${CMDB_TOKEN:-}
+      CMDB_CURSOR_FILE: /var/lib/cmdb/updated_since
+      WECOM_CORPID: ${WECOM_CORPID:-}
+      WECOM_SECRET: ${WECOM_SECRET:-}
+    volumes:
+      - cmdb-cursor:/var/lib/cmdb
+    networks: [backend]
+
+  beat:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    restart: always
+    # NOTE: beat schedules live in backend/config/celery.py (single source of
+    # truth): sync-cmdb-hourly -> cmdb.sync_cmdb, check-sla-daily ->
+    # apps.tickets.tasks.check_sla, check-ignore-expiry-hourly ->
+    # apps.tickets.tasks.check_ignore_expiry. This process only runs beat;
+    # never redefine task schedules here (no --schedule file, no crontab).
+    command: celery -A config beat --loglevel=${CELERY_LOGLEVEL:-INFO}
+    depends_on:
+      redis:
+        condition: service_healthy
+      worker:
+        condition: service_started
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?set DJANGO_SECRET_KEY in .env}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
+      POSTGRES_DB: ${POSTGRES_DB:-vulntickets}
+      POSTGRES_USER: ${POSTGRES_USER:-vuln}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      CELERY_TIMEZONE: ${CELERY_TIMEZONE:-Asia/Shanghai}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env}
+      CMDB_BASE_URL: ${CMDB_BASE_URL:-}
+      CMDB_TOKEN: ${CMDB_TOKEN:-}
+      CMDB_CURSOR_FILE: /var/lib/cmdb/updated_since
+    volumes:
+      - cmdb-cursor:/var/lib/cmdb
+    networks: [backend]
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    restart: always
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "${WEB_HTTP_PORT:-80}:80"
+      # TLS: uncomment after mounting certs (see nginx.conf + README).
+      # - "${WEB_HTTPS_PORT:-443}:443"
+    volumes:
+      # Manual TLS cert mount (ACME auto is explicitly OUT of scope):
+      # - ./certs/fullchain.pem:/etc/nginx/certs/fullchain.pem:ro
+      # - ./certs/privkey.pem:/etc/nginx/certs/privkey.pem:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # Ticket evidence images written by api (MEDIA_ROOT); served by nginx.
+      - media-data:/srv/app/media:ro
+    networks: [backend]
+
+  ftp:
+    build:
+      context: .
+      dockerfile: Dockerfile.ftp
+    restart: always
+    environment:
+      FTP_USER: ${FTP_USER:?set FTP_USER in .env}
+      FTP_PASS: ${FTP_PASS:?set FTP_PASS in .env}
+      FTP_UID: ${FTP_UID:-1001}
+      FTP_GID: ${FTP_GID:-1001}
+      PASV_ADDRESS: ${PASV_ADDRESS:?set PASV_ADDRESS to the host intranet IP in .env}
+      PASV_MIN_PORT: ${PASV_MIN_PORT:-40000}
+      PASV_MAX_PORT: ${PASV_MAX_PORT:-40100}
+    ports:
+      - "${FTP_PORT:-21}:21"
+      - "${PASV_MIN_PORT:-40000}-${PASV_MAX_PORT:-40100}:${PASV_MIN_PORT:-40000}-${PASV_MAX_PORT:-40100}"
+    volumes:
+      - rsas-drop:/rsas-drop
+    networks: [backend]
+
+  watcher:
+    build:
+      context: .
+      dockerfile: Dockerfile.watcher
+    restart: always
+    depends_on:
+      api:
+        condition: service_started
+      ftp:
+        condition: service_started
+    environment:
+      API_BASE: http://api:8000
+      WATCH_DIR: /rsas-drop
+      STATE_FILE: /state/seen.json
+      POLL_INTERVAL: ${WATCHER_POLL_INTERVAL:-15}
+      FILE_PATTERN: ${WATCHER_PATTERN:-*.zip}
+      WATCHER_TOKEN: ${WATCHER_TOKEN:?set WATCHER_TOKEN in .env}
+      # Safety default: true = preview-only (?dry_run=true, zero DB writes).
+      # Set WATCHER_DRY_RUN=false explicitly to opt in to live writes.
+      DRY_RUN: ${WATCHER_DRY_RUN:-true}
+    volumes:
+      - rsas-drop:/rsas-drop:ro
+      - watcher-state:/state
+    networks: [backend]
+
+volumes:
+  db-data:
+  redis-data:
+  rsas-drop:
+  watcher-state:
+  cmdb-cursor:
+  media-data:
+
+networks:
+  backend:
+    driver: bridge
