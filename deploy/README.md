@@ -1,5 +1,9 @@
 # Deploy unit — single-host Ubuntu Docker Compose (Task9)
 
+> 投产前必读：**[GO-LIVE.md](./GO-LIVE.md)** —— 上线准备清单（2 个必须先修的
+> 构建缺口、密钥/.env 清单、首个管理员、业务初始化、备份与验收）。
+> 本文讲「怎么跑」，GO-LIVE.md 讲「跑之前/之后做什么」。
+
 Wires the LANDED backend (Django/gunicorn + Celery worker + beat + PG16 +
 Redis) and the frontend static bundle behind nginx, plus the RSAS FTP drop
 path (`ftp` -> `watcher` -> import API).

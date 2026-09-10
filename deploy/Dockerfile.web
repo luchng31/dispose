@@ -1,7 +1,9 @@
 # Web image: build frontend, serve via nginx (chosen approach: multi-stage
-# in-image build of ../frontend; do NOT commit dist/. No build args needed —
-# frontend/src/api/client.ts reads VITE_API_BASE at runtime, same-origin
-# /api by default behind this nginx).
+# in-image build of ../frontend; do NOT commit dist/. Build args below feed
+# Vite's import.meta.env (baked at build time, NOT runtime):
+#   VITE_API_BASE       empty => same-origin /api behind this nginx (default).
+#   VITE_WECOM_CORPID / VITE_WECOM_AGENTID  empty => QR login disabled, the
+#     login page falls back to local accounts + TOTP.
 #
 # Stage 1 base: node:20-bookworm-slim. Stage 2: nginx:1.27-alpine (BSD-2).
 # nginx.conf is ALSO mounted read-only by compose for tweak-without-rebuild;
@@ -11,6 +13,12 @@ WORKDIR /src/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci
 COPY frontend/ ./
+ARG VITE_API_BASE=
+ARG VITE_WECOM_CORPID=
+ARG VITE_WECOM_AGENTID=
+ENV VITE_API_BASE=$VITE_API_BASE \
+    VITE_WECOM_CORPID=$VITE_WECOM_CORPID \
+    VITE_WECOM_AGENTID=$VITE_WECOM_AGENTID
 RUN npm run build
 
 FROM nginx:1.27-alpine

@@ -153,6 +153,13 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.web
+      args:
+        # Vite bakes these at build time (NOT runtime): VITE_API_BASE empty
+        # => same-origin /api via this nginx; WeCom vars empty => QR login
+        # off, local+TOTP still works. Set them in deploy/.env to override.
+        VITE_API_BASE: ${VITE_API_BASE:-}
+        VITE_WECOM_CORPID: ${VITE_WECOM_CORPID:-}
+        VITE_WECOM_AGENTID: ${VITE_WECOM_AGENTID:-}
     restart: always
     depends_on:
       api:
