@@ -31,11 +31,13 @@ WEB_AURORA: str = """<?xml version="1.0" encoding="utf-8"?>
     <target>
       <site>http://wxp-proxy.winning.com.cn</site>
       <vuln_scanned>
-        <vuln><port/><vul_id>1000256</vul_id><url>http://wxp-proxy.winning.com.cn/</url></vuln>
+        <vuln><port/><vul_id>1000256</vul_id><url>http://wxp-proxy.winning.com.cn/</url>
+          <mess_string>"[\\"OPTIONS\\", \\"http://wxp-proxy.winning.com.cn/\\", \\"\\", \\"(valid)http://x/\\"]"</mess_string></vuln>
       </vuln_scanned>
       <vuln_detail>
         <vuln><vul_id>1000256</vul_id><plugin_id>1000256</plugin_id>
           <name>检测到目标X-Content-Type-Options响应头缺失</name><cve_id/>
+          <threat_category>信息泄露类型:资源位置可预测</threat_category>
           <risk_points>2</risk_points><description>desc</description><solution>sol</solution></vuln>
       </vuln_detail>
     </target>
@@ -79,6 +81,11 @@ def test_aurora_web_flavor_site_url() -> None:
     assert ("wxp-proxy.winning.com.cn", 80, "检测到目标X-Content-Type-Options响应头缺失", "低") in rows
     assert ("ydgw.winning.com.cn", 8443, "SQL注入", "严重") in rows
     assert len(rows) == 2
+    first = next(f for f in findings if f.plugin_id == "1000256")
+    assert "漏洞URL：http://wxp-proxy.winning.com.cn/" in first.description
+    assert "威胁类型：信息泄露类型:资源位置可预测" in first.description
+    assert "验证请求：OPTIONS http://wxp-proxy.winning.com.cn/" in first.description
+    assert "验证依据：(valid)http://x/" in first.description
 
 
 @pytest.mark.django_db

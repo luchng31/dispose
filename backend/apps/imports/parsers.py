@@ -14,6 +14,7 @@ FTP watcher contract (Task9 wires it, no watcher code here):
 from __future__ import annotations
 
 import io
+import json
 import zipfile
 from typing import Any
 from urllib.parse import urlparse
@@ -130,6 +131,47 @@ def _aurora_target_endpoint(
     return ip, port, None
 
 
+def _append_web_evidence(merged: dict[str, Any]) -> None:
+    """Fold per-URL evidence into description (consumes the raw keys).
+
+    Web-flavor refs carry ``url``/``mess_string`` and details carry
+    ``threat_category`` — the RSAS UI renders these as 请求方式/验证参考/
+    判断详情. The XML has no such standalone fields; ``mess_string`` is a
+    JSON list [method, url, "", evidence...] which we decode into readable
+    lines appended to the description (pop them so they don't quarantine).
+    """
+    parts: list[str] = []
+    url = str(merged.pop("url", "") or "")
+    if url:
+        parts.append(f"漏洞URL：{url}")
+    category = str(merged.pop("threat_category", "") or "")
+    if category:
+        parts.append(f"威胁类型：{category}")
+    evidence = str(merged.pop("mess_string", "") or "")
+    if evidence:
+        # Some exporters double-JSON-encode the list: "[\"OPTIONS\", ...]"
+        decoded: Any = evidence
+        for _ in range(2):
+            try:
+                decoded = json.loads(decoded)
+            except (ValueError, TypeError):
+                break
+            if isinstance(decoded, list):
+                break
+        if isinstance(decoded, list) and decoded:
+            method = decoded[0] if len(decoded) > 0 else ""
+            verify_url = decoded[1] if len(decoded) > 1 else ""
+            parts.append(f"验证请求：{method} {verify_url}".rstrip())
+            rest = " ".join(str(x) for x in decoded[2:] if x)
+            if rest:
+                parts.append(f"验证依据：{rest}")
+        else:
+            parts.append(f"验证信息：{evidence}")
+    if parts:
+        base = str(merged.get("description", "") or "").strip()
+        merged["description"] = (base + "\n\n" + "\n".join(parts)).strip()
+
+
 def _aurora_collect_rows(target: Any, ip: str, port: int | None) -> list[dict[str, Any]]:
     """Join vuln_scanned refs with vuln_detail entries on vul_id for one target."""
     details = _index_details(target)
@@ -145,12 +187,14 @@ def _aurora_collect_rows(target: Any, ip: str, port: int | None) -> list[dict[st
             matched.add(vid)
             merged.update(details[vid])
         merged.update({k: v for k, v in ref.items() if v not in ("", None)})
+        _append_web_evidence(merged)
         target_rows.append(_with_severity(merged))
     for vid, detail in details.items():
         if vid in matched:
             continue
         merged = {"ip": ip}
         merged.update(detail)
+        _append_web_evidence(merged)
         target_rows.append(_with_severity(merged))
     if port is not None:
         for row in target_rows:

@@ -267,6 +267,37 @@ sudo crontab -e   # 追加一行：
 - **RSAS 自动投递**（可选）：vsftpd + watch.py 的 systemd 跑法见 [BARE-METAL.md §7](./BARE-METAL.md)。
 - **排障**：`journalctl -u vuln-api -f`（worker/beat 同理）；登录锁定参数见 `.env` 的 `LOGIN_*`。
 - **升级**：`git pull` →（依赖变了才）`pip install -r requirements.txt` → 按 §5 包装命令跑 `migrate` → 前端重新 build+rsync → `sudo systemctl restart vuln-api vuln-worker vuln-beat` → reload nginx。升级前先 `pip freeze > ~/pip-freeze-backup.txt` 留回滚快照。
+
+## 11. 更新服务器代码
+
+**两条路二选一：**
+
+**A. 不想碰 git（推荐日常用）**——开发机一键推送：
+```bash
+# 第一次：配免密 ssh
+ssh-copy-id ubuntu@<服务器IP>
+# 以后每次更新（自动：构建前端 → rsync 代码 → 服务器迁移+重启 → 烟测）：
+bash deploy/push.sh <服务器IP>
+```
+脚本见 `deploy/push.sh`，自动保护服务器上的 `.env`/证据图/静态文件不被覆盖。
+
+**B. git 仓库**——首次原地接入（运行时文件不受影响——`.env`/`media/`/`staticfiles/` 被 `.gitignore` 排除，`reset --hard` 只覆盖被跟踪的代码）：
+```bash
+cd /opt/vuln-ticket
+sudo -u vuln git init -b main
+sudo -u vuln git remote add origin <REPO_URL>
+sudo -u vuln git fetch origin main
+sudo -u vuln git reset --hard origin/main
+```
+认证：SSH 用 vuln 用户的部署密钥（`sudo -u vuln ssh-keygen -t ed25519 -N '' -f /opt/vuln-ticket/.ssh/id_ed25519`，公钥贴仓库平台 Deploy Key）；HTTPS 用 `https://<user>:<token>@<host>/...` 形式的 remote URL。
+
+以后每次更新：
+```bash
+cd /opt/vuln-ticket && sudo -u vuln git pull
+# 依赖/迁移/前端有变化时才需要（见 §10 升级），然后：
+sudo systemctl restart vuln-api vuln-worker vuln-beat
+```
+注意：git 操作一律 `sudo -u vuln` 执行，避免文件属主漂移成 root 导致服务写不了目录。
 - **完整验收**：GO-LIVE.md §9 清单逐项打勾（docker 命令按 [BARE-METAL.md §8](./BARE-METAL.md) 对照替换）。
 
 ## 常见坑速查
