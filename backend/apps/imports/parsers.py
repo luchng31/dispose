@@ -16,6 +16,7 @@ from __future__ import annotations
 import io
 import zipfile
 from typing import Any
+from urllib.parse import urlparse
 
 from lxml import etree
 from lxml import html as lxml_html
@@ -64,6 +65,30 @@ def _target_ip(target: Any) -> str:
     return ""
 
 
+def _site_endpoint(target: Any) -> tuple[str, int | None]:
+    """Web-flavor aurora targets carry <site> URL (no <ip>): host + port.
+
+    Port comes from an explicit :port in the URL, else the scheme default
+    (https=443, http=80). Host may be a domain — the system keys tickets by
+    this value (asset mapping can be added later, or ops dispatches manually).
+    """
+    site = ""
+    for child in list(target):
+        if _local(child.tag) == "site":
+            site = "".join(child.itertext()).strip()
+            break
+    if not site:
+        return "", None
+    if "//" not in site:
+        site = f"http://{site}"
+    parsed = urlparse(site)
+    host = parsed.hostname or ""
+    port = parsed.port
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+    return host, port
+
+
 def _index_details(target: Any) -> dict[str, dict[str, Any]]:
     details: dict[str, dict[str, Any]] = {}
     for el in target.iter():
@@ -89,14 +114,61 @@ def _with_severity(merged: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
-def _aurora_target_rows(root: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
-    """Assemble rows from RSAS <aurora> report structure.
+def _aurora_target_endpoint(
+    target: Any,
+) -> tuple[str, int | None, dict[str, Any] | None]:
+    """Resolve (ip, port, error) for one aurora target (host or web flavor)."""
+    ip = _target_ip(target)
+    if ip:
+        return ip, None, None
+    ip, port = _site_endpoint(target)
+    if not ip:
+        return "", None, {
+            "row": "target", "field": "ip",
+            "message": "target without ip/site; its vulns skipped",
+        }
+    return ip, port, None
 
-    Layout: ``report/targets/target`` carries ``<ip>`` plus
+
+def _aurora_collect_rows(target: Any, ip: str, port: int | None) -> list[dict[str, Any]]:
+    """Join vuln_scanned refs with vuln_detail entries on vul_id for one target."""
+    details = _index_details(target)
+    target_rows: list[dict[str, Any]] = []
+    matched: set[str] = set()
+    for el in target.iter():
+        if not _is_scan_ref(el):
+            continue
+        ref = _element_to_raw(el)
+        vid = str(ref.get("vul_id", "")).strip()
+        merged: dict[str, Any] = {"ip": ip}
+        if vid and vid in details:
+            matched.add(vid)
+            merged.update(details[vid])
+        merged.update({k: v for k, v in ref.items() if v not in ("", None)})
+        target_rows.append(_with_severity(merged))
+    for vid, detail in details.items():
+        if vid in matched:
+            continue
+        merged = {"ip": ip}
+        merged.update(detail)
+        target_rows.append(_with_severity(merged))
+    if port is not None:
+        for row in target_rows:
+            row.setdefault("port", port)
+    return target_rows
+
+
+def _aurora_target_rows(root: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
+    """Assemble rows from RSAS <aurora> report structure (host AND web flavor).
+
+    Host flavor: ``report/targets/target`` carries ``<ip>`` plus
     ``<vuln_scanned/vuln>`` (per-port refs: port/protocol/service/vul_id)
     and ``<vuln_detail/vuln>`` (details: vul_id/plugin_id/name/cve_id/
     risk_points/solution/description), joined on ``vul_id``.
-    Returns (rows, errors, handled).
+
+    Web flavor (webvul module, e.g. winning.com.cn exports): ``target`` has
+    ``<site>`` URL instead of ``<ip>`` and empty ``<port/>`` refs — host and
+    port derive from the site URL. Returns (rows, errors, handled).
     """
     targets = [el for el in root.iter() if _local(el.tag) == "target"]
     scanned = [el for el in root.iter() if _local(el.tag) == "vuln_scanned"]
@@ -105,30 +177,11 @@ def _aurora_target_rows(root: Any) -> tuple[list[dict[str, Any]], list[dict[str,
     rows: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     for target in targets:
-        ip = _target_ip(target)
-        if not ip:
-            errors.append({"row": "target", "field": "ip",
-                           "message": "target without ip; its vulns skipped"})
+        ip, port, error = _aurora_target_endpoint(target)
+        if error is not None:
+            errors.append(error)
             continue
-        details = _index_details(target)
-        matched: set[str] = set()
-        for el in target.iter():
-            if not _is_scan_ref(el):
-                continue
-            ref = _element_to_raw(el)
-            vid = str(ref.get("vul_id", "")).strip()
-            merged: dict[str, Any] = {"ip": ip}
-            if vid and vid in details:
-                matched.add(vid)
-                merged.update(details[vid])
-            merged.update({k: v for k, v in ref.items() if v not in ("", None)})
-            rows.append(_with_severity(merged))
-        for vid, detail in details.items():
-            if vid in matched:
-                continue
-            merged = {"ip": ip}
-            merged.update(detail)
-            rows.append(_with_severity(merged))
+        rows.extend(_aurora_collect_rows(target, ip, port))
     return rows, errors, True
 
 
