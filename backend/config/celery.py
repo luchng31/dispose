@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+import os
+
 from celery import Celery
 from celery.schedules import crontab
+
+# wsgi/manage.py each set DJANGO_SETTINGS_MODULE themselves; the celery CLI
+# (-A config) reads app.conf during option parsing, before Django's fixup
+# runs, so this entrypoint must provide it too.
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
 app = Celery("vuln_ticket")
 app.config_from_object("django.conf:settings", namespace="CELERY")

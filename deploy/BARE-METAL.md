@@ -2,6 +2,8 @@
 
 > 可以，全部组件都是标准件：PG16 + Redis + gunicorn + Celery + nginx。
 > Docker 版（compose）把它们打包成 6 个容器；本文给**同机裸跑**的等价方案。
+> **拿着全新 Ubuntu 24.04 服务器照着敲？** 直接用 **[BARE-METAL-RUNBOOK.md](./BARE-METAL-RUNBOOK.md)**
+> （一步到位执行手册：完整命令、systemd 单元、烟测与常见坑），本文是方案说明。
 > 密钥清单、企微/SMTP/CMDB 准备、业务初始化、备份与验收清单与
 > [GO-LIVE.md](./GO-LIVE.md) **完全通用**，本文只讲组件怎么落地（§末附命令对照表）。
 

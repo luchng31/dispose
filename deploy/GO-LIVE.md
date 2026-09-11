@@ -2,8 +2,9 @@
 
 > `deploy/README.md` 讲「怎么跑起来」，本文讲「跑起来之前要准备什么、之后要做什么」。
 > 逐条打勾后再 `docker compose up -d`。标注 ⛔ 的为阻断项，不解决不能上线。
-> **不用 Docker？** 看 [BARE-METAL.md](./BARE-METAL.md)（同机裸跑等价方案，
-> 本文档的密钥/业务初始化/备份/验收清单全部通用）。
+> **不用 Docker？** 看 [BARE-METAL.md](./BARE-METAL.md)（方案说明）与
+> [BARE-METAL-RUNBOOK.md](./BARE-METAL-RUNBOOK.md)（全新 24.04 服务器一步到位执行手册），
+> 本文档的密钥/业务初始化/备份/验收清单全部通用。
 
 ---
 
