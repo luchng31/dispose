@@ -627,7 +627,17 @@ async function loadIntegrations() {
 async function onSaveSmtp() {
   smtpSaving.value = true
   try {
-    await saveKeys(SMTP_KEYS, { ...smtpForm })
+    await saveKeys(SMTP_KEYS, {
+      'smtp.enabled': smtpForm.enabled,
+      'smtp.host': smtpForm.host,
+      'smtp.port': smtpForm.port,
+      'smtp.user': smtpForm.user,
+      'smtp.password': smtpForm.password,
+      'smtp.use_ssl': smtpForm.use_ssl,
+      'smtp.use_tls': smtpForm.use_tls,
+      'smtp.from': smtpForm.from,
+      'smtp.subject_prefix': smtpForm.subject_prefix,
+    })
     await loadIntegrations()
     ElMessage.success('SMTP 配置已保存')
   } catch (e: unknown) {
@@ -741,7 +751,10 @@ async function onTestWecom() {
 async function onSaveCmdb() {
   cmdbSaving.value = true
   try {
-    await saveKeys(CMDB_KEYS, { ...cmdbForm })
+    await saveKeys(CMDB_KEYS, {
+      'cmdb.base_url': cmdbForm.base_url,
+      'cmdb.token': cmdbForm.token,
+    })
     await loadIntegrations()
     ElMessage.success('CMDB 配置已保存')
   } catch (e: unknown) {

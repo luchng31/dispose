@@ -98,6 +98,20 @@ export async function opsBatchAssign(ids: Array<string | number>, assignee: stri
   return data
 }
 
+export interface RemindResult {
+  requested: number
+  sent_emails: number
+  reminded_tickets: number
+  skipped_cooldown: number
+  skipped_unassigned: number
+}
+
+/** POST /api/ops/remind {ids} -> 手动提醒邮件（按负责人聚合成一封；24h 冷却与无主自动跳过） */
+export async function remindTickets(ids: Array<string | number>): Promise<RemindResult> {
+  const { data } = await client.post<RemindResult>('/api/ops/remind', { ids })
+  return data
+}
+
 /** POST /api/ops/batch-close {ids, note?} -> {closed, skipped[{id, reason}]} */
 export async function opsBatchClose(
   ids: Array<string | number>,

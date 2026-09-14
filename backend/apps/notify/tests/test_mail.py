@@ -65,9 +65,7 @@ def test_assign_sends_mail(notify_db: dict[str, Any]) -> None:
         f"/api/ops/{ticket.pk}/assign", {"assignee": "nt_owner"}, format="json"
     )
     assert resp.status_code == 200, resp.content
-    assert len(mail.outbox) == 1
-    assert mail.outbox[0].to == ["owner@example.com"]
-    assert "派单" in mail.outbox[0].subject
+    assert len(mail.outbox) == 0  # auto-mail removed: manual remind via POST /api/ops/remind
 
 
 @override_settings(
@@ -103,8 +101,7 @@ def test_submit_notifies_operators(notify_db: dict[str, Any]) -> None:
         format="json",
     )
     assert resp.status_code == 200, resp.content
-    assert len(mail.outbox) == 1
-    assert mail.outbox[0].to == ["op@example.com"]
+    assert len(mail.outbox) == 0  # auto-mail removed: manual remind via POST /api/ops/remind
 
 
 @override_settings(

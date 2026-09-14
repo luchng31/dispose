@@ -7,6 +7,11 @@
     </el-header>
     <el-main>
       <el-card header="手工上传 ZIP">
+        <el-form inline @submit.prevent>
+          <el-form-item label="来源名称">
+            <el-input v-model="importSource" placeholder="可选，默认用文件名。如：winning官网Web扫描0910" clearable style="width: 320px" />
+          </el-form-item>
+        </el-form>
         <el-upload
           drag
           :auto-upload="false"
@@ -59,6 +64,7 @@ import { fetchBatches, postRsasImport, type ScanBatch } from '../api/imports'
 import { parseDryRun, type DryRunCounts } from '../utils/ops'
 
 const file = ref<File | null>(null)
+const importSource = ref('')
 const preview = ref<DryRunCounts | null>(null)
 const previewing = ref(false)
 const confirming = ref(false)
@@ -82,7 +88,7 @@ async function onDryRun() {
   }
   previewing.value = true
   try {
-    const raw = await postRsasImport(file.value, true)
+    const raw = await postRsasImport(file.value, true, 'manual', importSource.value || undefined)
     preview.value = parseDryRun(raw)
     if (preview.value.skipped) ElMessage.warning('该文件已导入过（按 file_hash 跳过）')
     else ElMessage.success('Dry-Run 预览已生成（零写库）')
@@ -101,7 +107,7 @@ async function onConfirm() {
   }
   confirming.value = true
   try {
-    await postRsasImport(file.value, false)
+    await postRsasImport(file.value, false, 'manual', importSource.value || undefined)
     ElMessage.success('已确认入库')
     preview.value = null
     await loadBatches()

@@ -101,6 +101,9 @@
             <el-button v-if="showOps" type="primary" plain :disabled="!selectedIds.length" @click="openBatchAssign">
               批量派单{{ selectedIds.length ? `（${selectedIds.length}）` : '' }}
             </el-button>
+            <el-button v-if="showOps" type="warning" plain :disabled="!selectedIds.length" :loading="remindLoading" @click="onRemind">
+              提醒负责人{{ selectedIds.length ? `（${selectedIds.length}）` : '' }}
+            </el-button>
           </el-form-item>
         </el-form>
 
@@ -322,7 +325,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchOpsPool, fetchAssignableUsers, fetchDelayRequests, fetchDepartments, decideDelayRequest, opsAssign, opsBatchAssign, opsBatchClose, opsBatchIgnore, opsClose, opsCreateTicket, opsEditTicket, opsDeleteTicket, opsIgnore, opsReject, exportPoolCsv } from '../api/ops'
+import { fetchOpsPool, fetchAssignableUsers, fetchDelayRequests, fetchDepartments, decideDelayRequest, opsAssign, opsBatchAssign, opsBatchClose, opsBatchIgnore, opsClose, opsCreateTicket, opsEditTicket, opsDeleteTicket, opsIgnore, opsReject, exportPoolCsv, remindTickets } from '../api/ops'
 import type { AssignableUser, DelayRequest, DeptTree } from '../api/ops'
 import type { TicketItem } from '../api/tickets'
 import { buildPoolQuery, type PoolTab } from '../utils/ops'
@@ -522,9 +525,36 @@ async function onAssign() {
 
 const selectedIds = ref<Array<string | number>>([])
 const batchDlg = reactive<{ open: boolean; username: string; note: string }>({ open: false, username: '', note: '' })
+const remindLoading = ref(false)
 
 function onSelectionChange(rows: TicketItem[]) {
   selectedIds.value = rows.map((r) => r.id)
+}
+
+async function onRemind() {
+  if (!selectedIds.value.length) return
+  try {
+    await ElMessageBox.confirm(
+      `将为所选 ${selectedIds.value.length} 张工单发送提醒邮件。同一负责人合并成一封；同一工单 24 小时内只提醒一次（重复选择会自动跳过）；无负责人的工单会被跳过。继续？`,
+      '发送处理提醒',
+      { type: 'warning', confirmButtonText: '发送', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  remindLoading.value = true
+  try {
+    const res = await remindTickets(selectedIds.value)
+    ElMessage.success(
+      `已发送 ${res.sent_emails} 封（${res.reminded_tickets} 张工单）${res.skipped_cooldown ? `，${res.skipped_cooldown} 张在冷却期内跳过` : ''}${res.skipped_unassigned ? `，${res.skipped_unassigned} 张无负责人跳过` : ''}`,
+    )
+    await load(page.value)
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { friendly?: string; detail?: string } } }
+    ElMessage.error(err.response?.data?.friendly ?? err.response?.data?.detail ?? '发送提醒失败')
+  } finally {
+    remindLoading.value = false
+  }
 }
 
 async function openBatchAssign() {

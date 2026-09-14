@@ -5,7 +5,7 @@ sla_due_at, assignee, reopen_count, first_seen_at, source} where ``title``
 falls back plugin_name -> cve -> "ip:port", ``assignee`` is the username
 (null when unassigned), ``reopen_count`` reads fix_evidence JSON (frozen
 schema), ``first_seen_at`` is the RSAS first-seen datetime (nullable), and
-``source`` is the ScanBatch source display label (FTP投递/手工上传, null
+``source`` is the ScanBatch source display label (漏洞扫描=FTP投递/手工上传名, null
 when the ticket has no batch).
 
 Detail shape: every list field plus the full model fields, fix_evidence,

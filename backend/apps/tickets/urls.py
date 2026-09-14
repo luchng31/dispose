@@ -23,7 +23,13 @@ Tickets (owner-isolated via get_visible_tickets; 404 when not visible):
         owner 申请延期 (待修复 only, 201); operator/leader 审批:
    GET  /api/ops/delay-requests?status= -> pending/approved/rejected list
    POST /api/ops/delay-requests/<id>/approve|reject {note?} -> 批准走
-        transition 待修复→已延期 (leader ≤30d, 超过需运营);  mail both sides
+        transition 待修复→已延期 (leader ≤30d, 超过需运营)
+   POST /api/ops/remind {ids[]} -> 手动提醒邮件 (IsOperator): 按负责人聚合
+        成一封; fix_evidence.last_reminded_at 24h 冷却自动跳过并报告;
+        无主/已关闭跳过; SMTP 未配置时 sent_emails=0 不标记可重试;
+        每张已发工单写审计 ticket.remind; -> 200
+        {requested, sent_emails, reminded_tickets, skipped_cooldown,
+         skipped_unassigned}
     POST /api/tickets/<id>/attachments (multipart file=) -> 201
          {id, url, name, uploaded_by, created_at}; owner-isolated (else 404);
          images png/jpg/gif/webp only, 5MB max, magic-byte sniffed (else 400);
@@ -139,6 +145,7 @@ from apps.tickets.views import (
     OpsPoolExportView,
     OpsPoolView,
     OpsRejectView,
+    OpsRemindView,
     OpsTicketCreateView,
     OpsTicketDeleteView,
     OpsTicketEditView,
@@ -172,6 +179,7 @@ urlpatterns: list[object] = [
     path("ops/batch-assign", OpsBatchAssignView.as_view()),
     path("ops/batch-close", OpsBatchCloseView.as_view()),
     path("ops/batch-ignore", OpsBatchIgnoreView.as_view()),
+    path("ops/remind", OpsRemindView.as_view()),
     path("ops/users", OpsUsersView.as_view()),
     path("ops/departments", OpsDepartmentsView.as_view()),
     path("ops/sla-policies", SlaPolicyView.as_view()),

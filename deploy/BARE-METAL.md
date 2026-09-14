@@ -198,27 +198,117 @@ sudo nginx -t && sudo systemctl reload nginx
 > 证据图上传后新增文件同样要 www-data 可读：给 `backend/media` 加个
 > `o+rX` 的 tmpfiles.d 规则，或上传目录固定组权限（部署后一次性处理）。
 
-## 7. 可选：FTP 自动化路线
+## 7. 可选：FTP 自动投递（RSAS 扫描器 → 自动入库）
 
-- **vsftpd**：参考 `deploy/vsftpd.conf`（同样 `pasv_address=本机内网 IP`，
-  防火墙 21 + 40000-40100 只放行扫描器来源 IP），本地投递目录如 `/srv/rsas-drop`。
-- **watcher**：`deploy/watcher/watch.py` 是独立脚本，systemd 常驻：
-  ```ini
-  # /etc/systemd/system/vuln-watcher.service
-  [Service]
-  User=vuln
-  EnvironmentFile=/opt/vuln-ticket/.env
-  Environment=API_BASE=http://127.0.0.1:8000
-  Environment=WATCH_DIR=/srv/rsas-drop
-  Environment=STATE_FILE=/var/lib/vuln-watcher/seen.json
-  Environment=WATCHER_TOKEN=同GO-LIVE签发
-  Environment=DRY_RUN=true
-  ExecStart=/opt/vuln-ticket/.venv/bin/python /opt/vuln-ticket/deploy/watcher/watch.py
-  Restart=always
-  ```
-  注意：watch.py 读的环境名是 `DRY_RUN`（compose 里才做 `WATCHER_DRY_RUN`→
-  `DRY_RUN` 的映射）；`WATCHER_TOKEN` 60 分钟过期问题同 GO-LIVE §2。
-- 或干脆不加：`/imports` 页面手工传 ZIP（支持 dry-run 预览与来源标记）。
+> 流程：RSAS 扫描器 FTP 上传报告 zip → `/srv/rsas-drop` → watcher 轮询（15s）
+> → `POST /api/imports/rsas?source=ftp` → 批次来源标注「漏洞扫描」。
+> 不装也能用：`/imports` 页面手工传 ZIP（dry-run、去重、来源标注全都有）。
+
+### 7.1 FTP 账号与目录
+
+```bash
+sudo useradd -r -m -d /srv/rsas-drop -s /usr/sbin/nologin rsas
+sudo passwd rsas            # 设置 FTP 密码（给扫描器配置用）
+sudo apt install -y vsftpd
+```
+
+`/etc/vsftpd.conf` 整体替换为（关键点：pasv_address=本机内网 IP，绝不用 127.0.0.1）：
+```
+listen=YES
+listen_ipv6=NO
+local_enable=YES
+write_enable=YES
+chroot_local_user=YES
+allow_writeable_chroot=YES
+local_umask=022
+check_shell=NO
+pasv_enable=YES
+pasv_address=192.168.91.130
+pasv_min_port=40000
+pasv_max_port=40100
+```
+```bash
+sudo systemctl restart vsftpd
+# 防火墙：只放行扫描器来源 IP
+sudo ufw allow from <扫描器IP> to any port 21 proto tcp
+sudo ufw allow from <扫描器IP> to any port 40000:40100 proto tcp
+```
+
+### 7.2 watcher 专用账号与 token（⚠️ 有效期陷阱）
+
+```bash
+# watcher 的 token 是 JWT 且不会自动刷新，默认 60 分钟就失效；
+# 先把全局有效期调到 30 天（.env 里已有该行就手动改），再签发
+grep -q '^JWT_ACCESS_MINUTES' /opt/vuln-ticket/.env && \
+  sudo sed -i 's/^JWT_ACCESS_MINUTES=.*/JWT_ACCESS_MINUTES=43200/' /opt/vuln-ticket/.env || \
+  echo 'JWT_ACCESS_MINUTES=43200' | sudo tee -a /opt/vuln-ticket/.env
+sudo systemctl restart vuln-api
+
+# 建专用运营账号（只用来签 token，不给人用）
+sudo -u vuln bash -c 'set -a; . /opt/vuln-ticket/.env; set +a; cd /opt/vuln-ticket/backend && /opt/vuln-ticket/.venv/bin/python manage.py shell -c "
+from apps.accounts.models import User
+u, created = User.objects.get_or_create(username=\"svc_watcher\", defaults={\"role\": \"operator\", \"is_active\": True, \"dept\": \"系统账号\"})
+u.set_password(\"换成强密码\")
+u.save()
+print(\"svc_watcher ready\")"'
+
+# 签发 30 天 JWT 并写入 .env
+TOKEN=$(curl -s -X POST http://127.0.0.1:8000/api/auth/local -H 'Content-Type: application/json' \
+  -d '{"username":"svc_watcher","password":"换成强密码"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['jwt'])")
+grep -q '^WATCHER_TOKEN=' /opt/vuln-ticket/.env && \
+  sudo sed -i "s|^WATCHER_TOKEN=.*|WATCHER_TOKEN=${TOKEN}|" /opt/vuln-ticket/.env || \
+  echo "WATCHER_TOKEN=${TOKEN}" | sudo tee -a /opt/vuln-ticket/.env
+```
+
+### 7.3 watcher systemd 常驻
+
+`/etc/systemd/system/vuln-watcher.service`：
+```ini
+[Unit]
+Description=vuln-ticket RSAS drop watcher
+After=vuln-api.service
+
+[Service]
+User=vuln
+Group=vuln
+EnvironmentFile=/opt/vuln-ticket/.env
+Environment=API_BASE=http://127.0.0.1:8000
+Environment=WATCH_DIR=/srv/rsas-drop
+Environment=STATE_FILE=/var/lib/vuln-watcher/seen.json
+Environment=DRY_RUN=true
+ExecStart=/opt/vuln-ticket/.venv/bin/python /opt/vuln-ticket/deploy/watcher/watch.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+```bash
+sudo chown -R vuln:vuln /var/lib/vuln-watcher
+sudo systemctl daemon-reload
+sudo systemctl enable --now vuln-watcher
+journalctl -u vuln-watcher -f    # 观察：发现新文件 → 上传 → 201
+```
+注意：watch.py 读的环境名是 `DRY_RUN`（compose 里才做 `WATCHER_DRY_RUN`→`DRY_RUN` 映射）；
+脚本只用 `requests`，`/opt/vuln-ticket/.venv` 里已自带，无需另装依赖。
+RSAS 目录里出现但 watcher 已处理过的文件记录在 `STATE_FILE`——删它会导致重传
+（API 侧 file_hash 兜底去重，不会产生重复工单）。
+
+### 7.4 RSAS 扫描器侧配置
+
+绿盟 RSAS 控制台 → 系统配置 → 报告自动上传（不同版本入口名称略有差异）：
+- FTP 服务器：`192.168.91.130`，端口 `21`，账号 `rsas` / 密码（7.1 设置的）
+- 被动模式（PASV）开启
+- 远程目录：`/`（即落到 /srv/rsas-drop）
+- 勾选「扫描完成后自动上传报告（XML/ZIP）」
+
+### 7.5 联调与切换
+
+1. `DRY_RUN=true`（unit 默认）跑 1-2 天：`/imports` 批次列表出现「漏洞扫描」批次、
+   有 stats 预览、零写库。
+2. 确认解析正常后：unit 里改 `DRY_RUN=false` → `sudo systemctl daemon-reload &&
+   sudo systemctl restart vuln-watcher` → 正式入库。
+3. 批次来源标注：FTP 投递的批次显示「漏洞扫描」（工单来源列同）。
 
 ## 8. 与 Docker 版的命令对照
 

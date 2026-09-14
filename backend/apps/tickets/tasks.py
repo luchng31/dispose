@@ -57,13 +57,6 @@ def check_sla() -> dict[str, int]:
         ticket.save(update_fields=["fix_evidence", "updated_at"])
         if level > prev:
             _notify_wecom(ticket.pk, level, ticket.sla_due_at)
-            from apps.notify.mailer import send_ticket_mail, ticket_line, user_email
-
-            send_ticket_mail(
-                [user_email(ticket.assignee)],
-                f"SLA告警(L{level})：工单#{ticket.pk}",
-                f"该工单SLA升级到 L{level}，请尽快处理。\n{ticket_line(ticket)}",
-            )
             _record_audit(ticket, "system", str(ticket.state), str(ticket.state))
         checked += 1
         escalated += 1
@@ -103,12 +96,5 @@ def check_ignore_expiry() -> dict[str, int]:
         ticket.fix_evidence = evidence
         ticket.save(update_fields=["fix_evidence", "updated_at"])
         transition(ticket, TicketState.PENDING_FIX, "system", {})
-        from apps.notify.mailer import send_ticket_mail, ticket_line, user_email
-
-        send_ticket_mail(
-            [user_email(ticket.assignee)],
-            f"忽略到期重开：工单#{ticket.pk}",
-            f"该工单的忽略已到期，自动重开为待修复。\n{ticket_line(ticket)}",
-        )
         reopened += 1
     return {"checked": checked, "reopened": reopened}

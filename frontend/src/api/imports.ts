@@ -18,10 +18,12 @@ export async function fetchBatches(): Promise<ScanBatch[]> {
   return (data as { results: ScanBatch[] }).results ?? []
 }
 
-/** POST /api/imports/rsas?dry_run=&source= (multipart file). dry_run=true -> preview, false -> confirm import. */
-export async function postRsasImport(file: File, dryRun: boolean, source = 'manual'): Promise<DryRunCounts & { batch_id?: number | string; stats?: Record<string, unknown> }> {
+/** POST /api/imports/rsas?dry_run=&source= (multipart file). dry_run=true -> preview, false -> confirm import.
+ * label=batch_name（可选）：手工上传的来源显示名，缺省=文件名。 */
+export async function postRsasImport(file: File, dryRun: boolean, source = 'manual', label?: string): Promise<DryRunCounts & { batch_id?: number | string; stats?: Record<string, unknown> }> {
   const form = new FormData()
   form.append('file', file)
+  if (label && label.trim()) form.append('batch_name', label.trim())
   const { data } = await client.post('/api/imports/rsas', form, {
     params: { dry_run: dryRun ? 'true' : 'false', source },
     headers: { 'Content-Type': 'multipart/form-data' },

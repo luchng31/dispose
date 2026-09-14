@@ -249,3 +249,47 @@ def test_zip_member_size_and_count_limits() -> None:
         rows, errors = parse_upload("crowded.zip", crowded.getvalue())
     assert rows == []
     assert any(e["field"] == "zip" for e in errors)
+
+
+@pytest.mark.django_db
+def test_rsas_import_batch_name_label() -> None:
+    """batch_name 自定义来源：批次/工单来源显示自定义名而非文件名."""
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    from apps.tickets.serializers import source_label
+
+    client = _client_for(_make_user())
+    payload = _zip_of("scan.xml", _vuln_xml(_row(**ROW_A)))
+    up = SimpleUploadedFile("winning.com.cn-1.zip", payload, content_type="application/octet-stream")
+    resp = client.post(
+        "/api/imports/rsas?dry_run=false",
+        {"file": up, "batch_name": "winning官网Web扫描0910"},
+    )
+    assert resp.status_code == 201, resp.content  # type: ignore[attr-defined]
+    batch = ScanBatch.objects.get(file_hash=resp.data["file_hash"])  # type: ignore[attr-defined]
+    assert batch.file_name == "winning官网Web扫描0910"
+    assert batch.source == "manual"
+    ticket = VulnTicket.objects.get(ip="192.168.1.10")
+    assert source_label(ticket) == "winning官网Web扫描0910"
+
+
+@pytest.mark.django_db
+def test_rsas_import_without_label_uses_filename() -> None:
+    client = _client_for(_make_user())
+    payload = _zip_of("scan.xml", _vuln_xml(_row(**ROW_A)))
+    resp = _post(client, payload, "plain.zip", dry_run=False)
+    batch = ScanBatch.objects.get(file_hash=resp.data["file_hash"])  # type: ignore[attr-defined]
+    assert batch.file_name == "plain.zip"
+
+
+@pytest.mark.django_db
+def test_rsas_reimport_same_hash_keeps_original_label() -> None:
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    client = _client_for(_make_user())
+    payload = _zip_of("scan.xml", _vuln_xml(_row(**ROW_A)))
+    _post(client, payload, "a.zip", dry_run=False)
+    up = SimpleUploadedFile("b.zip", payload, content_type="application/octet-stream")
+    resp = client.post("/api/imports/rsas?dry_run=false", {"file": up, "batch_name": "新名字"})
+    assert resp.status_code == 200 and resp.data["skipped"] is True  # type: ignore[attr-defined]
+    assert ScanBatch.objects.get().file_name == "a.zip"

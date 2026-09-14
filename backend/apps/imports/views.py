@@ -63,6 +63,10 @@ def _is_dry_run(request: Request) -> bool:
 class RsasImportView(APIView):
     """POST /api/imports/rsas?dry_run=true|false (multipart ``file``).
 
+    ``batch_name`` (multipart field or query param, optional): 手工上传的
+    来源显示名（缺省=文件名），工单列表/批次列表展示；仅 source=manual 生效。
+    ``source=ftp`` 记 FTP 投递渠道。
+
     dry_run=true -> read-only preview
     ``{new, still_open, fixed_unverified, reopened, errors, skipped,
     file_hash}`` with ZERO db writes. Otherwise the upload is parsed,
@@ -114,8 +118,18 @@ class RsasImportView(APIView):
             if str(request.query_params.get("source", "")).lower() == "ftp"
             else BatchSource.MANUAL
         )
+        # 手工上传可自定义来源显示名（工单列表/批次列表用它，缺省=文件名）；
+        # 仅 manual 生效。file_hash 去重不受影响：同内容重传仍返回已有批次。
+        data = request.data if isinstance(request.data, dict) else {}
+        label = str(
+            data.get("batch_name") or request.query_params.get("batch_name") or ""
+        ).strip()[:512]
         batch = ScanBatch.objects.create(
-            file_name=upload.name or "upload",
+            file_name=(
+                label
+                if (label and source == BatchSource.MANUAL)
+                else (upload.name or "upload")
+            ),
             file_hash=file_hash,
             source=source,
             rsas_version="",

@@ -5,7 +5,7 @@ from django.db import models
 
 
 class BatchSource(models.TextChoices):
-    FTP = "ftp", "FTP投递"
+    FTP = "ftp", "漏洞扫描"
     MANUAL = "manual", "手工上传"
 
 

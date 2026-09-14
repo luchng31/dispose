@@ -25,6 +25,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Count, Prefetch, Q, QuerySet
 from django.http import HttpResponse
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework import generics, status
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import BasePermission, IsAuthenticated
@@ -42,7 +43,6 @@ from apps.accounts.permissions import (
 from apps.assets.dispatch import get_current_owner
 from apps.audit.models import AuditLog
 from apps.imports.models import BatchSource, ScanBatch
-from apps.notify.mailer import role_emails, send_ticket_mail, ticket_line, user_email
 from apps.tickets.filters import (
     SEVERITY_VALUES,
     STATE_VALUES,
@@ -342,13 +342,8 @@ class TicketSubmitView(APIView):
         resp: Response = _transition_response(
             ticket, TicketState.PENDING_RETEST, user.role, {"fix_evidence": evidence}
         )
-        if resp.status_code == 200:
-            send_ticket_mail(
-                role_emails(Role.OPERATOR, Role.ADMIN),
-                f"待复测：工单#{ticket.pk}",
-                f"{user.username} 提交了修复证据，请复测确认。\n{ticket_line(ticket)}",
-            )
         return resp
+
 
 
 class TicketDelayView(APIView):
@@ -417,11 +412,6 @@ class TicketDelayRequestView(APIView):
             delay_until=form.validated_data.get("delay_until"),
             reason=reason,
         )
-        send_ticket_mail(
-            role_emails(Role.OPERATOR, Role.LEADER, Role.ADMIN),
-            f"延期申请：工单#{ticket.pk}",
-            f"{user.username} 申请延期。原因：{reason}。\n{ticket_line(ticket)}",
-        )
         return Response(DelayRequestSerializer(req).data, status=status.HTTP_201_CREATED)
 
 
@@ -485,12 +475,6 @@ class OpsDelayDecideView(APIView):
         req.decided_at = timezone.now()
         req.decide_note = note
         req.save()
-        if req.requested_by is not None:
-            send_ticket_mail(
-                [user_email(req.requested_by)],
-                f"延期被驳回：工单#{req.ticket_id}",
-                f"{user.username} 驳回了你的延期申请。备注：{note or '无'}。",
-            )
         return Response(DelayRequestSerializer(req).data)
 
     def _approve(self, req: DelayRequest, user: User) -> Response:
@@ -518,12 +502,6 @@ class OpsDelayDecideView(APIView):
         req.decided_by = user
         req.decided_at = timezone.now()
         req.save()
-        if req.requested_by is not None:
-            send_ticket_mail(
-                [user_email(req.requested_by)],
-                f"延期已批准：工单#{req.ticket_id}",
-                f"{user.username} 批准了你的延期申请（{days}天）。",
-            )
         return Response(DelayRequestSerializer(req).data)
 
 
@@ -624,12 +602,101 @@ class OpsAssignView(APIView):
             ticket.assignee = target
             ticket.save()
         refreshed: VulnTicket = VulnTicket.objects.get(pk=ticket.pk)
-        send_ticket_mail(
-            [user_email(target)],
-            f"派单：工单#{ticket.pk} 指派给你",
-            f"{user.username} 将该工单指派给你，请按SLA处理。\n{ticket_line(refreshed)}",
-        )
         return Response(VulnTicketDetailSerializer(refreshed).data)
+
+
+REMIND_COOLDOWN_HOURS: int = 24
+
+
+class OpsRemindView(APIView):
+    """POST /api/ops/remind {ids[]} (operator) — 手动提醒邮件（防轰炸）.
+
+    Groups the selected open tickets by assignee and sends ONE aggregated
+    email per assignee. Anti-bombing: tickets reminded within
+    REMIND_COOLDOWN_HOURS (fix_evidence.last_reminded_at) are skipped and
+    reported; unassigned tickets are skipped; a mail is only marked
+    (fix_evidence.last_reminded_at + AuditLog ticket.remind) when actually
+    sent (SMTP off -> sent_emails 0, retry later). -> 200
+    {requested, sent_emails, reminded_tickets, skipped_cooldown,
+    skipped_unassigned}.
+    """
+
+    permission_classes = [IsOperator]
+
+    def post(self, request: Request) -> Response:
+        user: User = _actor(request)
+        ids = request.data.get("ids")
+        if not isinstance(ids, list) or not ids or len(ids) > 500:
+            return Response(
+                {"detail": "ids 需为 1-500 的工单ID数组"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            id_list = [int(i) for i in ids]
+        except (TypeError, ValueError):
+            return Response({"detail": "ids 需为整数数组"}, status=status.HTTP_400_BAD_REQUEST)
+        now = timezone.now()
+        cutoff = now - timezone.timedelta(hours=REMIND_COOLDOWN_HOURS)
+        tickets = (
+            VulnTicket.objects.filter(pk__in=id_list)
+            .exclude(state__in=[TicketState.CLOSED, TicketState.IGNORED])
+            .select_related("assignee")
+        )
+        groups: dict[User, list[VulnTicket]] = {}
+        skipped_cooldown = 0
+        skipped_unassigned = 0
+        seen: set[int] = set()
+        for ticket in tickets:
+            if ticket.pk in seen:
+                continue
+            seen.add(ticket.pk)
+            if ticket.assignee is None:
+                skipped_unassigned += 1
+                continue
+            last = str((ticket.fix_evidence or {}).get("last_reminded_at", "") or "")
+            parsed = parse_datetime(last) if last else None
+            if parsed is not None and parsed > cutoff:
+                skipped_cooldown += 1
+                continue
+            groups.setdefault(ticket.assignee, []).append(ticket)
+
+        from apps.notify.mailer import send_ticket_mail, ticket_line, user_email
+
+        sent_emails = 0
+        reminded = 0
+        for assignee, ts in groups.items():
+            to = [user_email(assignee)]
+            body = "以下工单需要您尽快处理：\n" + "\n".join(ticket_line(t) for t in ts)
+            sent = send_ticket_mail(
+                to, f"漏洞处理提醒：{len(ts)} 张工单待处理", body
+            )
+            if sent <= 0:
+                continue
+            sent_emails += 1
+            reminded += len(ts)
+            for t in ts:
+                evidence = dict(t.fix_evidence or {})
+                evidence["last_reminded_at"] = now.isoformat()
+                t.fix_evidence = evidence
+                t.save(update_fields=["fix_evidence", "updated_at"])
+                AuditLog.objects.create(
+                    actor=user,
+                    action="ticket.remind",
+                    ticket=t,
+                    entity="VulnTicket",
+                    entity_id=str(t.pk),
+                    diff_json={"reminded_to": to[0]},
+                    ip_addr=str(request.META.get("REMOTE_ADDR", "")),
+                )
+        return Response(
+            {
+                "requested": len(id_list),
+                "sent_emails": sent_emails,
+                "reminded_tickets": reminded,
+                "skipped_cooldown": skipped_cooldown,
+                "skipped_unassigned": skipped_unassigned,
+            }
+        )
 
 
 class _ManualCreateError(Exception):
@@ -812,11 +879,6 @@ class OpsTicketCreateView(APIView):
                     status=status.HTTP_403_FORBIDDEN,
                 )
             refreshed: VulnTicket = VulnTicket.objects.get(pk=ticket.pk)
-            send_ticket_mail(
-                [user_email(target)],
-                f"派单：工单#{ticket.pk} 指派给你",
-                f"{user.username} 将该工单指派给你，请按SLA处理。\n{ticket_line(refreshed)}",
-            )
         else:
             refreshed = VulnTicket.objects.get(pk=ticket.pk)
         return Response(VulnTicketDetailSerializer(refreshed).data, status=status.HTTP_201_CREATED)
@@ -1432,12 +1494,6 @@ class OpsBatchAssignView(APIView):
                 assigned += 1
             else:
                 skipped.append({"id": ticket.pk, "reason": reason})
-        if assigned:
-            send_ticket_mail(
-                [user_email(target)],
-                f"批量派单：{assigned} 张工单指派给你",
-                f"{user.username} 将 {assigned} 张工单批量指派给你，请按SLA处理。",
-            )
         return Response({"assigned": assigned, "skipped": skipped})
 
 
@@ -1519,11 +1575,6 @@ class OpsCloseView(APIView):
         if resp.status_code == 200:
             _remember_note(ticket.pk, "close_note", str(form.validated_data.get("note", "")))
             refreshed: VulnTicket = VulnTicket.objects.get(pk=ticket.pk)
-            send_ticket_mail(
-                [user_email(refreshed.assignee)],
-                f"已闭合：工单#{ticket.pk}",
-                f"{user.username} 已确认关闭该工单。\n{ticket_line(refreshed)}",
-            )
             return Response(VulnTicketDetailSerializer(refreshed).data)
         return resp
 
@@ -1546,12 +1597,6 @@ class OpsRejectView(APIView):
         if note:
             payload["reject_reason"] = note
         resp: Response = _transition_response(ticket, TicketState.PENDING_FIX, user.role, payload)
-        if resp.status_code == 200:
-            send_ticket_mail(
-                [user_email(ticket.assignee)],
-                f"被打回：工单#{ticket.pk}",
-                f"{user.username} 将该工单打回待修复。原因：{note or '未填写'}。\n{ticket_line(ticket)}",
-            )
         return resp
 
 

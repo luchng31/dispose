@@ -61,8 +61,8 @@ npm run dev        # :5173（CORS 白名单只认 5173，preview 换端口会被
   （同名复用同一批次）；发现日期 = RSAS 首次发现时间，SLA 自发现日起算。
 - **审计**：工单 save 自动写字段 diff（含操作人中间件）；建号/改密/停用/
   集成改配等手写 `AuditLog` 行，密钥一律记 `****`。
-- **通知**：SMTP 邮件（派单/复测/关闭/驳回/SLA 升级）+ 企微群机器人
-  （SLA 升级推群）；未配置时静默跳过。
+- **通知**：邮件改为运营**手动提醒**（工单池勾选→提醒负责人，同一工单 24 小时内只发一次，按负责人合并成一封）+ 企微群机器人
+  （SLA 升级推群）；未配置时静默跳过。过渡流转（派单/复测/关闭/驳回/SLA 升级）不再自动发邮件。
 
 ## 3. 接口总表
 
@@ -105,6 +105,7 @@ npm run dev        # :5173（CORS 白名单只认 5173，preview 换端口会被
 | POST | `/api/ops/:id/assign` | `{assignee}` 手工派单/改派（待分配→待修复；已闭合/忽略 422） |
 | DELETE | `/api/ops/:id` | **删除工单**（operator，任意状态，测试用；审计记 `ticket.delete`，ticket FK SET_NULL 留 {ip,title,state,severity} 快照） |
 | POST | `/api/ops/batch-assign` | `{ids[], assignee}` ≤500，返回 `{assigned, skipped[{id,reason}]}` |
+| POST | `/api/ops/remind` | `{ids[]}` ≤500 **手动提醒**：按负责人聚合成一封邮件，24h 冷却/无主/已关闭自动跳过，每张发出工单写审计 `ticket.remind` |
 | POST | `/api/ops/batch-close` | 批量关闭 |
 | POST | `/api/ops/batch-ignore` | 批量忽略（需原因） |
 | POST | `/api/ops/:id/close` | `{note?}` 待复测→已闭合 |
@@ -134,7 +135,7 @@ npm run dev        # :5173（CORS 白名单只认 5173，preview 换端口会被
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/api/imports/rsas?dry_run=&source=` | multipart `file=`（RSAS XML/ZIP，上限见 `MAX_UPLOAD_BYTES`，`source=ftp` 记 FTP 投递） |
+| POST | `/api/imports/rsas?dry_run=&source=` | multipart `file=`（RSAS XML/ZIP，上限见 `MAX_UPLOAD_BYTES`，`source=ftp` 记 FTP 投递）；multipart `batch_name=` 可选手工来源显示名（仅 manual 生效，缺省=文件名；同 file_hash 重传仍按已有批次返回） |
 | GET | `/api/imports/batches` | 批次列表（hash+统计） |
 | GET | `/api/imports/assets/template` | 资产导入模板表头下载（服务器资源汇总表格式） |
 | POST | `/api/imports/assets?dry_run=` | multipart `file=` 资产+负责人导入（.xlsx/.csv）。汇总表格式：内网IP*, 管理人*, 管理人-隶属组织, 资源使用部门, 部门负责人（`姓名(工号)` 自动拆分；管理人建 owner，部门负责人建/升级 leader）。**汇总表格式=权威全量同步**：本表未出现的现任 IP 映射置无主（资产保留、在办工单转无主池）、DeptLeaderMap 按新表重建，dry-run 返回 `orphaned_preview`；旧格式 ip/hostname/os/biz_system/owner/owner_dept/email/wecom_userid 仅增量更新不触发同步（表头支持"工号"别名，仅工号列时兜底作负责人用户名） |

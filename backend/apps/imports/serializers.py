@@ -9,6 +9,7 @@ from .models import ScanBatch
 
 class ScanBatchSerializer(serializers.ModelSerializer):
     stats = serializers.SerializerMethodField()
+    source = serializers.SerializerMethodField()
 
     class Meta:
         model = ScanBatch
@@ -17,6 +18,9 @@ class ScanBatchSerializer(serializers.ModelSerializer):
             "rsas_version", "stats", "created_at",
         )
         read_only_fields = fields
+
+    def get_source(self, obj: ScanBatch) -> str:
+        return obj.get_source_display()
 
     def get_stats(self, obj: ScanBatch) -> dict[str, Any]:
         return dict(obj.stats_json or {})
