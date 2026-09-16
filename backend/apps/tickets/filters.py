@@ -81,6 +81,8 @@ def apply_pool_filters(qs: QuerySet[VulnTicket], params: dict[str, str]) -> Quer
     手工派单设置 assignee 后，工单同时退出两列；IP 归属缺口改去
     资产管理 -> 无主资产（asset 侧）补映射。
     severity: 四档之一，可逗号多选（非法 400）；q: IP/插件名/插件ID/CVE/标题模糊匹配。
+    dept: 负责人部门精确匹配（完整原串，来自 /api/ops/departments 树值）；
+    dept_prefix: 负责人部门前缀匹配（一级部门筛选用）。
     """
     state: str | None = _checked(params.get("state"), STATE_VALUES, "state")
     if state is not None:
@@ -103,4 +105,10 @@ def apply_pool_filters(qs: QuerySet[VulnTicket], params: dict[str, str]) -> Quer
     if is_truthy(params.get("orphan")):
         mapped = AssetOwnerMap.objects.filter(valid_to__isnull=True).values("ip_id")
         qs = qs.filter(assignee__isnull=True).exclude(ip__in=mapped)
+    dept: str = str(params.get("dept", "") or "").strip()
+    if dept:
+        qs = qs.filter(assignee__dept=dept)
+    dept_prefix: str = str(params.get("dept_prefix", "") or "").strip()
+    if dept_prefix:
+        qs = qs.filter(assignee__dept__startswith=dept_prefix)
     return qs

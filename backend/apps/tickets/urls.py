@@ -37,9 +37,10 @@ Tickets (owner-isolated via get_visible_tickets; 404 when not visible):
          auditor POST 403
 
 Ops pool (operator/leader only; others 403):
-   GET  /api/ops/pool?orphan=&unassigned=&state=&severity=&q= -> paginated list
+   GET  /api/ops/pool?orphan=&unassigned=&state=&severity=&q=&dept=&dept_prefix= -> paginated list
          rows (unassigned: assignee NULL; orphan: unassigned 且 IP 无现任负责人
          映射；severity 可逗号多选，非法 400；q 模糊匹配 IP/插件名/插件ID/CVE；
+         dept=负责人部门精确匹配完整原串；dept_prefix=前缀匹配一级部门；
          手工派单后同时退出两列，IP 缺口去资产管理补映射）
     GET  /api/ops/pool/export?<pool filters> -> CSV (UTF-8 BOM, cap 10k rows,
          operator/leader; formula cells prefixed with a single quote)
@@ -52,8 +53,9 @@ Ops pool (operator/leader only; others 403):
         cap 500; reason required 422; illegal edges skipped[{id, reason}])
     GET  /api/ops/users -> {results[{id, username, dept, role}]} assignable
          users (active, non-auditor), operator/leader only
-    GET  /api/ops/departments -> {first[], tree{一级:[二级...]}, count}
-         级联筛选数据源（去重用户部门，operator/leader only）
+    GET  /api/ops/departments -> {first[], tree{一级:[完整部门原串...]}, count}
+         级联筛选数据源：一级=首个 -（兼容 /）之前，其余整体为二级（内部 - 保留）；
+         树值为完整原串，回传 ?dept= 精确匹配，展示时剥一级前缀（operator/leader only）
     POST /api/ops/<id>/assign {assignee} -> manual dispatch (IsOperator);
          待分配→待修复, other open states reassigned in place (SLA untouched);
          closed/ignored -> 422, unknown/inactive user -> 404
@@ -99,7 +101,8 @@ Misc (JWT on all; auditor read-only, POST as auditor 403):
   GET  /api/dashboard?dept=&dept_prefix= -> {total, by_state{6 states},
        by_severity{4}, sla{overdue, at_risk, ok, no_due}, by_dept{一级部门:
        {total, open, closed, overdue}}} (dept exact; dept_prefix startswith;
-       overdue = open + sla_due_at past, at_risk = due within 3d)
+       一级 = 首个 -（兼容 /）之前的段; overdue = open + sla_due_at past,
+       at_risk = due within 3d)
    GET  /api/audit?ticket_id=&actor= -> paginated {id, action, actor,
         ticket_id, entity, entity_id, diff_json, created_at}, newest-first;
         admin/operator/auditor only (others 403)

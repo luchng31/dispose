@@ -58,7 +58,8 @@ export interface DeptTree {
   count: number
 }
 
-/** GET /api/ops/departments -> {first[], tree{一级:[二级...]}, count} 级联筛选数据源 */
+/** GET /api/ops/departments -> {first[], tree{一级:[完整部门原串...]}, count} 级联筛选数据源。
+ * 一级=首个 -（兼容 /）之前；树值为完整原串（回传 ?dept= 精确匹配），展示剥一级前缀。 */
 export async function fetchDepartments(): Promise<DeptTree> {
   const { data } = await client.get<DeptTree>('/api/ops/departments')
   return { first: data.first ?? [], tree: data.tree ?? {}, count: data.count ?? 0 }

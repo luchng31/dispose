@@ -91,7 +91,7 @@
               style="width: 150px"
               @change="load(1)"
             >
-              <el-option v-for="d in secondOptions" :key="d" :label="d" :value="d" />
+              <el-option v-for="d in secondOptions" :key="d" :label="secondLabel(d)" :value="d" />
             </el-select>
           </el-form-item>
           <el-form-item>
@@ -348,9 +348,13 @@ const deptFirst = ref('')
 const deptSecond = ref('')
 const secondOptions = computed(() => (deptFirst.value ? (deptTree.value.tree[deptFirst.value] ?? []) : []))
 
+function secondLabel(full: string): string {
+  return deptFirst.value && full.startsWith(deptFirst.value) ? full.slice(deptFirst.value.length + 1) : full
+}
+
 function deptParams(): { dept?: string; dept_prefix?: string } {
   if (!deptFirst.value) return {}
-  if (deptSecond.value) return { dept: `${deptFirst.value}/${deptSecond.value}`, dept_prefix: deptFirst.value }
+  if (deptSecond.value) return { dept: deptSecond.value, dept_prefix: deptFirst.value }
   return { dept_prefix: deptFirst.value }
 }
 

@@ -1102,20 +1102,35 @@ class OpsUsersView(APIView):
 
 
 def split_dept(dept: str) -> tuple[str, str | None]:
-    """Split '一级/二级/...' into (first, rest-or-None), stripped."""
-    parts = [p.strip() for p in str(dept or "").split("/") if p.strip()]
-    if not parts:
+    """Split a dept path into (一级, 二级-or-None).
+
+    The first ``-`` (legacy ``/`` also accepted) is the level boundary:
+    一级 = before it, 二级 = everything after it with internal separators
+    preserved — org data looks like
+    平台与医技-数据平台中心-数据应用研发部-数据创新研发部.
+    """
+    raw = str(dept or "").strip()
+    if not raw:
         return "", None
-    first = parts[0]
-    rest = "/".join(parts[1:])
+    candidates = [i for i in (raw.find("-"), raw.find("/")) if i >= 0]
+    idx = min(candidates) if candidates else -1
+    if idx < 0:
+        return raw, None
+    first = raw[:idx].strip()
+    if not first:
+        return raw, None
+    rest = raw[idx + 1 :].strip()
     return first, rest or None
 
 
 class OpsDepartmentsView(APIView):
     """GET /api/ops/departments (operator/leader only, dept cascade data).
 
-    Distinct non-empty User.dept values grouped by first segment:
-    {first: [...], tree: {一级: [二级...]}, count}. Powers the pool
+    Distinct non-empty User.dept values grouped by first segment (首个
+    ``-``/``/`` 之前为一级，其余整体为二级): {first: [...],
+    tree: {一级: [完整部门原串...]}}, count}. Tree values carry the FULL
+    dept string so the client can send it back as ?dept= unchanged
+    (exact match); strip the 一级 prefix for display. Powers the pool
     一级/二级 cascade selects; filter via ?dept_prefix= / ?dept=.
     """
 
@@ -1130,12 +1145,15 @@ class OpsDepartmentsView(APIView):
         )
         tree: dict[str, list[str]] = {}
         for raw in names:
-            first, rest = split_dept(raw)
+            value = str(raw or "").strip()
+            if not value:
+                continue
+            first, _rest = split_dept(value)
             if not first:
                 continue
             bucket = tree.setdefault(first, [])
-            if rest is not None and rest not in bucket:
-                bucket.append(rest)
+            if value not in bucket:
+                bucket.append(value)
         for bucket in tree.values():
             bucket.sort()
         ordered = dict(sorted(tree.items()))
@@ -1627,19 +1645,16 @@ class DashboardView(APIView):
     """GET /api/dashboard?dept=&dept_prefix= — counts computed live.
 
     ?dept= exact-matches assignee dept (kept for compatibility);
-    ?dept_prefix= prefix-matches (一级部门 filter, e.g. "研发中心" matches
-    "研发中心/一组"). ``by_dept`` groups by the top-level dept segment of
-    the assignee (dept.split('/')[0]; unassigned -> "未分配").
+    ?dept_prefix= prefix-matches (一级部门 filter, e.g. "平台与医技" matches
+    "平台与医技-数据平台中心-..."). ``by_dept`` groups by the top-level
+    dept segment (首个 ``-``/``/`` 之前; unassigned -> "未分配").
     """
 
     permission_classes = [IsAuthenticated, IsAuditorReadOnly]
 
     @staticmethod
     def _top_dept(dept: object) -> str:
-        raw = str(dept or "").strip()
-        if not raw:
-            return "未分配"
-        return raw.split("/")[0].strip() or "未分配"
+        return split_dept(str(dept or ""))[0] or "未分配"
 
     def get(self, request: Request) -> Response:
         user: User = _actor(request)

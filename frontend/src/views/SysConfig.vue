@@ -118,7 +118,7 @@
               <el-input-number v-model="smtpForm.port" :min="1" :max="65535" />
             </el-form-item>
             <el-form-item :label="labelFor('smtp.user', '账号')">
-              <el-input v-model="smtpForm.user" placeholder="user@company.com" clearable style="width: 260px" />
+              <el-input v-model="smtpForm.user" placeholder="SMTP 登录账号" clearable style="width: 260px" />
             </el-form-item>
             <el-form-item :label="labelFor('smtp.password', '密码')">
               <el-input
@@ -137,7 +137,7 @@
               <el-switch v-model="smtpForm.use_tls" />
             </el-form-item>
             <el-form-item :label="labelFor('smtp.from', '发件人')">
-              <el-input v-model="smtpForm.from" placeholder="noreply@company.com" clearable style="width: 260px" />
+              <el-input v-model="smtpForm.from" placeholder="发件人邮箱地址" clearable style="width: 260px" />
             </el-form-item>
             <el-form-item :label="labelFor('smtp.subject_prefix', '主题前缀')">
               <el-input v-model="smtpForm.subject_prefix" placeholder="【漏洞工单】" clearable style="width: 260px" />
@@ -149,7 +149,7 @@
         </template>
         <el-form inline style="margin-top: 12px" @submit.prevent>
           <el-form-item label="测试收件">
-            <el-input v-model="testMail" placeholder="name@company.com" clearable style="width: 220px" />
+            <el-input v-model="testMail" placeholder="收件人邮箱地址" clearable style="width: 220px" />
           </el-form-item>
           <el-form-item>
             <el-button type="primary" :loading="testLoading" @click="onTestMail">发送测试邮件</el-button>

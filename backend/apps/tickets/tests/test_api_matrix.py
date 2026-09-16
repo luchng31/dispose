@@ -68,8 +68,8 @@ def _make_ticket(ip: str, state: str = TicketState.PENDING_FIX, **kwargs: Any) -
 
 @pytest.fixture
 def matrix_db(db: Any) -> dict[str, Any]:
-    owner_a: User = _make_user("mx_owner_a", Role.OWNER, dept="biz-a")
-    owner_b: User = _make_user("mx_owner_b", Role.OWNER, dept="biz-b")
+    owner_a: User = _make_user("mx_owner_a", Role.OWNER, dept="biza")
+    owner_b: User = _make_user("mx_owner_b", Role.OWNER, dept="bizb")
     operator: User = _make_user("mx_operator", Role.OPERATOR, dept="sec")
     leader: User = _make_user("mx_leader", Role.LEADER, dept="sec")
     auditor: User = _make_user("mx_auditor", Role.AUDITOR, dept="audit")
@@ -654,20 +654,51 @@ def test_pool_filters_severity_and_q(matrix_db: dict[str, Any]) -> None:
 
 @pytest.mark.django_db
 def test_ops_departments_tree(matrix_db: dict[str, Any]) -> None:
-    """部门树：去重+一级分组+二级挂载；owner 403，未登录 401."""
-    _make_user("mx_owner_c", Role.OWNER, dept="biz-a/一组")
-    _make_user("mx_owner_d", Role.OWNER, dept="biz-a/二组")
-    _make_user("mx_owner_e", Role.OWNER, dept="  biz-a / 一组  ")
+    """部门树：首个 - 或 / 前为一级、树值为完整原串；owner 403，未登录 401."""
+    _make_user("mx_owner_c", Role.OWNER, dept="biza/一组")
+    _make_user("mx_owner_d", Role.OWNER, dept="biza/二组")
+    _make_user("mx_owner_e", Role.OWNER, dept="  biza/一组  ")
+    _make_user(
+        "mx_owner_f", Role.OWNER, dept="平台与医技-数据平台中心-数据应用研发部-数据创新研发部"
+    )
     client: APIClient = _auth("mx_operator")
     resp = client.get("/api/ops/departments")
     assert resp.status_code == 200
-    assert resp.data["first"] == ["audit", "biz-a", "biz-b", "sec"]
-    assert resp.data["tree"]["biz-a"] == ["一组", "二组"]
-    assert resp.data["tree"]["sec"] == []
-    assert resp.data["count"] == 4
+    assert resp.data["first"] == ["audit", "biza", "bizb", "sec", "平台与医技"]
+    assert resp.data["tree"]["biza"] == ["biza", "biza/一组", "biza/二组"]
+    assert resp.data["tree"]["平台与医技"] == [
+        "平台与医技-数据平台中心-数据应用研发部-数据创新研发部"
+    ]
+    assert resp.data["tree"]["sec"] == ["sec"]
+    assert resp.data["count"] == 5
     owner_client: APIClient = _auth("mx_owner_a")
     assert owner_client.get("/api/ops/departments").status_code == 403
     assert APIClient().get("/api/ops/departments").status_code in (401, 403)
+
+
+@pytest.mark.django_db
+def test_pool_dept_filters() -> None:
+    """pool ?dept= 精确匹配完整原串、?dept_prefix= 前缀匹配一级部门."""
+    owner_a: User = _make_user(
+        "pd_owner_a", Role.OWNER, dept="平台与医技-数据平台中心-数据应用研发部"
+    )
+    owner_b: User = _make_user(
+        "pd_owner_b", Role.OWNER, dept="平台与医技-数据平台中心-数据应用研发部-数据创新研发部"
+    )
+    _make_user("pd_operator", Role.OPERATOR)
+    t_a: VulnTicket = _make_ticket("10.94.0.1", TicketState.PENDING_FIX, assignee=owner_a)
+    t_b: VulnTicket = _make_ticket("10.94.0.2", TicketState.PENDING_FIX, assignee=owner_b)
+    _make_ticket("10.94.0.3", TicketState.PENDING_FIX)
+    client: APIClient = _auth("pd_operator")
+    prefix = client.get("/api/ops/pool", {"dept_prefix": "平台与医技"})
+    assert prefix.status_code == 200
+    assert {r["id"] for r in prefix.data["results"]} == {t_a.pk, t_b.pk}
+    deep = client.get("/api/ops/pool", {"dept_prefix": "平台与医技-数据平台中心"})
+    assert deep.data["count"] == 2
+    exact = client.get("/api/ops/pool", {"dept": "平台与医技-数据平台中心-数据应用研发部"})
+    assert {r["id"] for r in exact.data["results"]} == {t_a.pk}
+    none = client.get("/api/ops/pool", {"dept": "不存在的部门"})
+    assert none.data["count"] == 0
 
 
 @pytest.mark.django_db

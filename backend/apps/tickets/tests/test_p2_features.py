@@ -104,6 +104,7 @@ def test_dashboard_by_dept_top_level_grouping() -> None:
     owner_a = _make_user("db_owner_a", Role.OWNER, dept="研发中心/一组")
     owner_b = _make_user("db_owner_b", Role.OWNER, dept="研发中心/二组")
     owner_c = _make_user("db_owner_c", Role.OWNER, dept="运营部")
+    owner_d = _make_user("db_owner_d", Role.OWNER, dept="平台与医技-数据平台中心-数据应用研发部")
     now = timezone.now()
     _make_ticket("10.77.0.1", TicketState.PENDING_FIX, assignee=owner_a,
                  sla_due_at=now - timezone.timedelta(days=1))
@@ -111,6 +112,7 @@ def test_dashboard_by_dept_top_level_grouping() -> None:
     _make_ticket("10.77.0.3", TicketState.CLOSED, assignee=owner_b)
     _make_ticket("10.77.0.4", TicketState.PENDING_FIX, assignee=owner_c)
     _make_ticket("10.77.0.5", TicketState.PENDING_ASSIGN)
+    _make_ticket("10.77.0.6", TicketState.PENDING_FIX, assignee=owner_d)
     _make_user("db_operator", Role.OPERATOR)
     client = _auth("db_operator")
     resp = client.get("/api/dashboard")
@@ -122,8 +124,11 @@ def test_dashboard_by_dept_top_level_grouping() -> None:
     assert by_dept["研发中心"]["overdue"] == 1
     assert by_dept["运营部"]["total"] == 1
     assert by_dept["未分配"]["total"] == 1
+    assert by_dept["平台与医技"]["total"] == 1
     prefix = client.get("/api/dashboard", {"dept_prefix": "研发中心"})
     assert prefix.data["total"] == 3
+    hyphen_prefix = client.get("/api/dashboard", {"dept_prefix": "平台与医技"})
+    assert hyphen_prefix.data["total"] == 1
     exact = client.get("/api/dashboard", {"dept": "研发中心/一组"})
     assert exact.data["total"] == 1
 
