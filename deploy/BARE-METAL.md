@@ -203,6 +203,7 @@ sudo nginx -t && sudo systemctl reload nginx
 > 流程：RSAS 扫描器 FTP 上传报告 zip → `/srv/rsas-drop` → watcher 轮询（15s）
 > → `POST /api/imports/rsas?source=ftp` → 批次来源标注「漏洞扫描」。
 > 不装也能用：`/imports` 页面手工传 ZIP（dry-run、去重、来源标注全都有）。
+> **只想照着配？** 一步步的独立操作文档见 [FTP-SETUP.md](./FTP-SETUP.md)。
 
 ### 7.1 FTP 账号与目录
 

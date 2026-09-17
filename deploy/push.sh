@@ -2,10 +2,11 @@
 # 开发机 → 裸机服务器 一键推送更新（不依赖 git 仓库）
 #
 # 用法（开发机上）:
-#   bash deploy/push.sh <服务器IP>        # 例: bash deploy/push.sh 192.168.91.130
+#   bash deploy/push.sh <user@服务器IP>   # 例: bash deploy/push.sh 192.168.91.130
+#                                        #   或 bash deploy/push.sh root@172.16.0.50
 #
 # 前置（只在第一次）:
-#   ssh-copy-id ubuntu@<服务器IP>         # 免密 ssh，之后 rsync/ssh 不再要密码
+#   ssh-copy-id <user>@<服务器IP>         # 免密 ssh，之后 rsync/ssh 不再要密码
 #
 # 保护约定（不会被覆盖/删除的服务器侧文件）:
 #   /opt/vuln-ticket/.env                 服务器密钥配置
@@ -14,8 +15,18 @@
 #   .git/                                 若做过 git 接入
 set -euo pipefail
 
-HOST="${1:?用法: bash deploy/push.sh <服务器IP>}"
-STAGE="/home/ubuntu/vuln-stage"
+ARG="${1:?用法: bash deploy/push.sh [user@]服务器IP}"
+if [[ "$ARG" == *@* ]]; then
+  REMOTE_USER="${ARG%%@*}"
+  HOST="${ARG#*@}"
+else
+  REMOTE_USER="ubuntu"
+  HOST="$ARG"
+fi
+case "$REMOTE_USER" in
+  root) STAGE="/root/vuln-stage" ;;
+  *) STAGE="/home/${REMOTE_USER}/vuln-stage" ;;
+esac
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # 与 .gitignore 对齐的排除清单（运行时数据/本地产物永不进服务器）
@@ -37,7 +48,7 @@ echo "==> 1/4 构建前端（VITE_API_BASE 留空=同源 /api；约半分钟）"
 )
 
 echo "==> 2/4 rsync 代码 → ${HOST}:${STAGE}"
-rsync -a --delete "${EXCLUDES[@]}" "$ROOT/" "ubuntu@${HOST}:${STAGE}/"
+rsync -a --delete "${EXCLUDES[@]}" "$ROOT/" "${REMOTE_USER}@${HOST}:${STAGE}/"
 
 echo "==> 3/4 服务器落盘 + 迁移 + 重启（输入 ubuntu 的 sudo 密码）"
 # 同一份排除清单必须在接收侧再生效一次：--delete 会删掉接收端多出来的文件，
@@ -46,7 +57,7 @@ REMOTE_EXCLUDES=""
 for e in "${EXCLUDES[@]}"; do
   REMOTE_EXCLUDES+=" --exclude $(printf '%q' "$e")"
 done
-ssh -t "ubuntu@${HOST}" "
+ssh -t "${REMOTE_USER}@${HOST}" "
 set -e
 sudo rsync -a --delete ${REMOTE_EXCLUDES} ${STAGE}/ /opt/vuln-ticket/
 sudo chown -R vuln:vuln /opt/vuln-ticket
