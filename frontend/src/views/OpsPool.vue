@@ -69,7 +69,7 @@
             </el-select>
           </el-form-item>
           <el-form-item label="搜索">
-            <el-input v-model="filters.q" placeholder="IP/标题/CVE" clearable style="width: 220px" @keyup.enter="load(1)" />
+            <el-input v-model="filters.q" placeholder="IP/标题/CVE/负责人" clearable style="width: 220px" @keyup.enter="load(1)" />
           </el-form-item>
           <el-form-item label="一级部门">
             <el-select

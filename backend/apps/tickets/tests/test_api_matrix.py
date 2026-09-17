@@ -107,6 +107,26 @@ def test_owner_my_list_sees_only_mine(matrix_db: dict[str, Any]) -> None:
 
 
 @pytest.mark.django_db
+def test_owner_side_hides_ignored(matrix_db: dict[str, Any]) -> None:
+    """用户端不显示已忽略工单（低危留痕）：列表/汇总/详情 404；运营仍可见可重开."""
+    ignored: VulnTicket = _make_ticket("10.20.0.1", TicketState.IGNORED, assignee=matrix_db["owner_a"])
+    owner_client: APIClient = _auth("mx_owner_a")
+    listing = owner_client.get("/api/tickets/my")
+    assert {row["ip"] for row in listing.data["results"]} == {"10.20.0.1"}
+    assert listing.data["count"] == 2  # 已忽略的不在
+    assert owner_client.get(f"/api/tickets/{ignored.pk}").status_code == 404
+    summary = owner_client.get("/api/tickets/ip-summary")
+    row = next(r for r in summary.data["results"] if r["ip"] == "10.20.0.1")
+    assert row["total"] == 2  # 汇总同样排除已忽略
+
+    # 运营侧不受影响：池子里可见，详情 200，可重开
+    ops_client: APIClient = _auth("mx_operator")
+    pool = ops_client.get("/api/ops/pool", {"state": "已忽略"})
+    assert pool.data["count"] == 1
+    assert ops_client.get(f"/api/tickets/{ignored.pk}").status_code == 200
+
+
+@pytest.mark.django_db
 def test_owner_detail_cross_owner_404(matrix_db: dict[str, Any]) -> None:
     client: APIClient = _auth("mx_owner_a")
     other: VulnTicket = matrix_db["other"]
@@ -626,9 +646,11 @@ def test_manual_create_custom_source(matrix_db: dict[str, Any]) -> None:
 
 @pytest.mark.django_db
 def test_pool_filters_severity_and_q(matrix_db: dict[str, Any]) -> None:
-    """工单池支持 severity + q（IP/插件/CVE）组合过滤；非法严重性 400."""
+    """工单池支持 severity + q（IP/插件/CVE/负责人）组合过滤；非法严重性 400."""
     _make_ticket("10.20.0.9", TicketState.PENDING_ASSIGN, severity=Severity.LOW,
                  plugin_name="本地测试插件", cve="CVE-2026-0101")
+    _make_ticket("10.20.1.1", TicketState.PENDING_FIX, assignee=matrix_db["owner_a"])
+    _make_ticket("10.20.1.2", TicketState.PENDING_FIX, assignee=matrix_db["owner_b"])
     client: APIClient = _auth("mx_operator")
     sev = client.get("/api/ops/pool", {"severity": "低"})
     assert sev.status_code == 200
@@ -638,6 +660,13 @@ def test_pool_filters_severity_and_q(matrix_db: dict[str, Any]) -> None:
     assert q_ip.data["count"] == 1
     q_cve = client.get("/api/ops/pool", {"q": "cve-2026-0101"})
     assert q_cve.data["count"] == 1
+    q_owner = client.get("/api/ops/pool", {"q": "mx_owner_a"})
+    assert q_owner.status_code == 200
+    assert {row["ip"] for row in q_owner.data["results"]} == {"10.20.1.1"}
+    q_owner_partial = client.get("/api/ops/pool", {"q": "owner_b"})
+    assert {row["ip"] for row in q_owner_partial.data["results"]} == {"10.20.1.2"}
+    q_owner_wide = client.get("/api/ops/pool", {"q": "mx_owner"})
+    assert {row["ip"] for row in q_owner_wide.data["results"]} == {"10.20.1.1", "10.20.1.2"}
     q_combo = client.get("/api/ops/pool", {"severity": "高", "q": "10.20.0"})
     assert q_combo.status_code == 200
     assert {row["ip"] for row in q_combo.data["results"]} == {"10.20.0.1", "10.20.0.2"}
@@ -647,7 +676,9 @@ def test_pool_filters_severity_and_q(matrix_db: dict[str, Any]) -> None:
     multi = client.get("/api/ops/pool", {"severity": "高,低"})
     assert multi.status_code == 200
     got_ips = sorted(row["ip"] for row in multi.data["results"])
-    assert got_ips == ["10.20.0.1", "10.20.0.1", "10.20.0.2", "10.20.0.9"]
+    assert got_ips == [
+        "10.20.0.1", "10.20.0.1", "10.20.0.2", "10.20.0.9", "10.20.1.1", "10.20.1.2",
+    ]
     multi_bad = client.get("/api/ops/pool", {"severity": "高,极高"})
     assert multi_bad.status_code == 400
 
@@ -715,7 +746,7 @@ def test_manual_create_auto_dispatches_via_owner_map(matrix_db: dict[str, Any]) 
     assert auto.data["assignee"] == "mx_owner_a"
     assert auto.data["state"] == TicketState.PENDING_FIX
     assert auto.data["source"] == "手工录入"
-    assert auto.data["sla_due_at"]
+    assert auto.data["sla_due_at"] is None  # SLA 未提醒不计时，首次提醒起算
     assert auto.data["first_seen_at"]
     orphan = client.post(
         "/api/ops/tickets",
@@ -725,7 +756,7 @@ def test_manual_create_auto_dispatches_via_owner_map(matrix_db: dict[str, Any]) 
     assert orphan.status_code == 201, orphan.content
     assert orphan.data["assignee"] is None
     assert orphan.data["state"] == TicketState.PENDING_ASSIGN
-    assert orphan.data["sla_due_at"]  # SLA 自发现日起算，与是否派单无关
+    assert orphan.data["sla_due_at"] is None  # 同上
     explicit = client.post(
         "/api/ops/tickets",
         {"ip": "10.20.0.9", "severity": "低", "title": "手工巡检",

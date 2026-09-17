@@ -7,7 +7,7 @@
       <el-button link @click="onLogout">退出</el-button>
     </el-header>
     <el-main>
-      <el-card style="max-width: 640px">
+      <el-card style="max-width: 640px; margin: 0 auto">
         <template v-if="enrolled === null">
           <el-skeleton :rows="3" animated />
         </template>

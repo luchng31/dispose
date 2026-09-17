@@ -22,8 +22,8 @@
         </el-form>
         <el-table :data="rows" v-loading="loading" style="width: 100%">
           <el-table-column prop="username" label="用户名" width="150" />
-          <el-table-column prop="dept" label="部门" width="130" />
-          <el-table-column prop="email" label="邮箱" min-width="180" />
+          <el-table-column prop="dept" label="部门" min-width="280" show-overflow-tooltip />
+          <el-table-column prop="email" label="邮箱" width="200" show-overflow-tooltip />
           <el-table-column prop="role" label="角色" width="110" />
           <el-table-column prop="wecom_userid" label="企微账号" width="140" />
           <el-table-column label="状态" width="90">

@@ -73,6 +73,11 @@ class RsasImportView(APIView):
     deduped by ``md5(ip|port|plugin_id|cve)`` and reconciled; a repeated
     ``file_hash`` (sha256) returns the stored stats with ``skipped: true``.
     A payload with zero valid rows and only errors -> 400.
+
+    New tickets auto-dispatch by IP owner map: assigned -> 待修复 (stats
+    ``auto_assigned``), unmapped -> 待分配 orphan pool. 低危 findings are
+    auto-ignored with a retention reason (stats ``low_ignored``; reopen
+    from the detail page to bring them back into the workflow).
     """
 
     permission_classes = [IsOperator]

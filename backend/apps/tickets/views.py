@@ -145,8 +145,17 @@ def _actor(request: Request) -> User:
     return user
 
 
-def _visible(user: User) -> QuerySet[VulnTicket]:
-    return get_visible_tickets(user).select_related("assignee", "batch").order_by("-updated_at", "-id")
+def _visible(user: User, user_side: bool = False) -> QuerySet[VulnTicket]:
+    """Owner-facing surfaces hide 已忽略 records (低危留存等) from owners.
+
+    user_side=True marks the /my family (list/export/ip-summary/detail);
+    for owner-role callers ignored tickets are excluded — records stay
+    visible to ops in the pool and reopenable from the detail page.
+    """
+    qs: QuerySet[VulnTicket] = get_visible_tickets(user)
+    if user_side and user.role == Role.OWNER:
+        qs = qs.exclude(state=TicketState.IGNORED)
+    return qs.select_related("assignee", "batch").order_by("-updated_at", "-id")
 
 
 def _transition_response(
@@ -190,7 +199,7 @@ class MyTicketListView(generics.ListAPIView):
     pagination_class = StandardPagination
 
     def get_queryset(self) -> QuerySet[VulnTicket]:
-        qs: QuerySet[VulnTicket] = _visible(_actor(self.request))
+        qs: QuerySet[VulnTicket] = _visible(_actor(self.request), user_side=True)
         params: dict[str, str] = {k: v for k, v in self.request.query_params.items()}
         try:
             return apply_my_filters(qs, params)
@@ -239,7 +248,7 @@ class MyTicketExportView(APIView):
     permission_classes = [IsAuthenticated, IsAuditorReadOnly]
 
     def get(self, request: Request) -> Response | HttpResponse:
-        qs: QuerySet[VulnTicket] = _visible(_actor(request))
+        qs: QuerySet[VulnTicket] = _visible(_actor(request), user_side=True)
         params: dict[str, str] = {k: v for k, v in request.query_params.items()}
         try:
             qs = apply_my_filters(qs, params)
@@ -269,7 +278,7 @@ class IpSummaryView(APIView):
     permission_classes = [IsAuthenticated, IsAuditorReadOnly]
 
     def get(self, request: Request) -> Response:
-        qs: QuerySet[VulnTicket] = _visible(_actor(request))
+        qs: QuerySet[VulnTicket] = _visible(_actor(request), user_side=True)
         params: dict[str, str] = {k: v for k, v in request.query_params.items()}
         try:
             qs = apply_my_filters(qs, params)
@@ -307,7 +316,7 @@ class TicketDetailView(generics.RetrieveAPIView):
     lookup_url_kwarg = "pk"
 
     def get_queryset(self) -> QuerySet[VulnTicket]:
-        return _visible(_actor(self.request)).prefetch_related(
+        return _visible(_actor(self.request), user_side=True).prefetch_related(
             Prefetch(
                 "audit_logs",
                 queryset=AuditLog.objects.select_related("actor").order_by(
@@ -608,6 +617,26 @@ class OpsAssignView(APIView):
 REMIND_COOLDOWN_HOURS: int = 24
 
 
+def _stamp_remind(ticket: VulnTicket, now: Any, to_addr: str) -> str | None:
+    """Stamp last_reminded_at; first remind also starts the SLA clock.
+
+    Clock semantics: 未提醒不计时 — sla_due_at computed from the
+    then-current severity policy only when still null. Returns the
+    sla_due_at iso when the clock started, else None.
+    """
+    evidence = dict(ticket.fix_evidence or {})
+    evidence["last_reminded_at"] = now.isoformat()
+    ticket.fix_evidence = evidence
+    update_fields = ["fix_evidence", "updated_at"]
+    sla_started: str | None = None
+    if ticket.sla_due_at is None:
+        ticket.sla_due_at = compute_due(now, str(ticket.severity))
+        sla_started = ticket.sla_due_at.isoformat()
+        update_fields.append("sla_due_at")
+    ticket.save(update_fields=update_fields)
+    return sla_started
+
+
 class OpsRemindView(APIView):
     """POST /api/ops/remind {ids[]} (operator) — 手动提醒邮件（防轰炸）.
 
@@ -616,7 +645,10 @@ class OpsRemindView(APIView):
     REMIND_COOLDOWN_HOURS (fix_evidence.last_reminded_at) are skipped and
     reported; unassigned tickets are skipped; a mail is only marked
     (fix_evidence.last_reminded_at + AuditLog ticket.remind) when actually
-    sent (SMTP off -> sent_emails 0, retry later). -> 200
+    sent (SMTP off -> sent_emails 0, retry later). The FIRST successful
+    remind also starts the SLA clock for tickets whose ``sla_due_at`` is
+    still null (computed from the then-current severity policy) — clock
+    semantics: 未提醒不计时. -> 200
     {requested, sent_emails, reminded_tickets, skipped_cooldown,
     skipped_unassigned}.
     """
@@ -675,17 +707,17 @@ class OpsRemindView(APIView):
             sent_emails += 1
             reminded += len(ts)
             for t in ts:
-                evidence = dict(t.fix_evidence or {})
-                evidence["last_reminded_at"] = now.isoformat()
-                t.fix_evidence = evidence
-                t.save(update_fields=["fix_evidence", "updated_at"])
+                sla_started = _stamp_remind(t, now, to[0])
                 AuditLog.objects.create(
                     actor=user,
                     action="ticket.remind",
                     ticket=t,
                     entity="VulnTicket",
                     entity_id=str(t.pk),
-                    diff_json={"reminded_to": to[0]},
+                    diff_json={
+                        "reminded_to": to[0],
+                        **({"sla_due_at": sla_started} if sla_started else {}),
+                    },
                     ip_addr=str(request.META.get("REMOTE_ADDR", "")),
                 )
         return Response(
@@ -813,10 +845,11 @@ class OpsTicketCreateView(APIView):
     omitted -> shared "手工录入" batch. Custom text gets its own MANUAL
     ScanBatch (reused on repeat), so 来源 shows the text verbatim.
     assignee is a username (active, non-auditor); omitted -> auto-dispatch
-    via the IP's current owner mapping. SLA clock starts at creation
-    (compute_due over first_seen, independent of assignment). Assigned
-    tickets move straight to 待修复 via transition(); ownerless ones stay
-    待分配 in the orphan pool. -> 201 detail.
+    via the IP's current owner mapping. SLA clock does NOT start at
+    creation: ``sla_due_at`` stays null until the first successful remind
+    (POST /api/ops/remind), which computes due from the then-current
+    severity policy. Assigned tickets move straight to 待修复 via
+    transition(); ownerless ones stay 待分配 in the orphan pool. -> 201 detail.
     """
 
     permission_classes = [IsOperator]
@@ -856,7 +889,6 @@ class OpsTicketCreateView(APIView):
             description=str(data.get("description", "") or ""),
             solution=str(data.get("solution", "") or ""),
             state=TicketState.PENDING_ASSIGN,
-            sla_due_at=compute_due(now, severity),
             first_seen_at=now,
             last_seen_at=now,
             batch=batch,
@@ -1029,13 +1061,16 @@ class OpsTicketEditView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if "severity" in changed:
-            base = ticket.first_seen_at or timezone.now()
-            old_due = ticket.sla_due_at.isoformat() if ticket.sla_due_at else None
-            ticket.sla_due_at = compute_due(base, ticket.severity)
-            changed["sla_due_at"] = {
-                "old": old_due,
-                "new": ticket.sla_due_at.isoformat() if ticket.sla_due_at else None,
-            }
+            if ticket.sla_due_at is not None:
+                base = ticket.first_seen_at or timezone.now()
+                old_due = ticket.sla_due_at.isoformat()
+                ticket.sla_due_at = compute_due(base, ticket.severity)
+                changed["sla_due_at"] = {
+                    "old": old_due,
+                    "new": ticket.sla_due_at.isoformat(),
+                }
+            # sla_due_at None (clock not started) stays None: SLA begins at
+            # the first remind, computed with the NEW severity at that time.
         ticket.save()
         AuditLog.objects.create(
             actor=user,

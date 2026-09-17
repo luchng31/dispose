@@ -107,6 +107,26 @@ def post_file(path: str, filename: str) -> dict:
     return body if isinstance(body, dict) else {"raw": body}
 
 
+def _safe_name(name: str) -> str:
+    """Make a requests-encodable filename for logging + multipart.
+
+    FTP clients (RSAS in GBK) drop filenames Python reads back with
+    surrogateescape chars; surrogates crash requests' multipart encoder
+    and logging alike. Try to restore the original GBK name, else replace
+    undecodable bytes. Server dedup/parsing uses file CONTENT, so the
+    name is cosmetic.
+    """
+    try:
+        name.encode("utf-8")
+        return name
+    except UnicodeEncodeError:
+        pass
+    try:
+        return name.encode("utf-8", "surrogateescape").decode("gbk", "replace")
+    except UnicodeDecodeError:
+        return name.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+
+
 def scan_once(seen: dict[str, str]) -> bool:
     """One poll pass. Returns True if the seen-state changed."""
     try:
@@ -121,28 +141,29 @@ def scan_once(seen: dict[str, str]) -> bool:
         path = os.path.join(WATCH_DIR, name)
         if not os.path.isfile(path):
             continue
+        safe = _safe_name(name)
         try:
             file_hash = sha256_of(path)
         except OSError as exc:
-            log.error("hash-failed file=%s error=%s", name, exc)
+            log.error("hash-failed file=%s error=%s", safe, exc)
             continue
         if file_hash in seen:
-            log.info("skip-seen filename=%s hash=%.12s...", name, file_hash)
+            log.info("skip-seen filename=%s hash=%.12s...", safe, file_hash)
             continue
         if not settled(path):
-            log.info("skip-unsettled filename=%s (still growing)", name)
+            log.info("skip-unsettled filename=%s (still growing)", safe)
             continue
         try:
-            result = post_file(path, name)
+            result = post_file(path, safe)
             counts = result.get("stats", result)
             log.info(
                 "uploaded filename=%s hash=%.12s... skipped=%s counts=%s",
-                name, file_hash, result.get("skipped", False), counts,
+                safe, file_hash, result.get("skipped", False), counts,
             )
         except Exception as exc:  # noqa: BLE001 - must never kill the loop
-            log.error("upload-failed filename=%s error=%s", name, exc)
+            log.error("upload-failed filename=%s error=%s", safe, exc)
             continue
-        seen[file_hash] = name
+        seen[file_hash] = safe
         changed = True
     return changed
 

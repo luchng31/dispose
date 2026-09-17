@@ -80,7 +80,8 @@ def apply_pool_filters(qs: QuerySet[VulnTicket], params: dict[str, str]) -> Quer
     AssetOwnerMap 中无有效负责人的子集（同样要求 assignee NULL）。
     手工派单设置 assignee 后，工单同时退出两列；IP 归属缺口改去
     资产管理 -> 无主资产（asset 侧）补映射。
-    severity: 四档之一，可逗号多选（非法 400）；q: IP/插件名/插件ID/CVE/标题模糊匹配。
+    severity: 四档之一，可逗号多选（非法 400）；q: IP/插件名/插件ID/CVE/标题/
+    负责人用户名/企微账号 模糊匹配。
     dept: 负责人部门精确匹配（完整原串，来自 /api/ops/departments 树值）；
     dept_prefix: 负责人部门前缀匹配（一级部门筛选用）。
     """
@@ -99,6 +100,8 @@ def apply_pool_filters(qs: QuerySet[VulnTicket], params: dict[str, str]) -> Quer
             | Q(plugin_name__icontains=query)
             | Q(plugin_id__icontains=query)
             | Q(cve__icontains=query)
+            | Q(assignee__username__icontains=query)
+            | Q(assignee__wecom_userid__icontains=query)
         )
     if is_truthy(params.get("unassigned")):
         qs = qs.filter(assignee__isnull=True)

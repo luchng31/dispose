@@ -1,7 +1,8 @@
 """Task6 route contracts (stable for frontend lane Task7/Task8, zero new deps).
 
 Tickets (owner-isolated via get_visible_tickets; 404 when not visible):
-  GET  /api/tickets/my?state=&severity=&q= -> paginated list rows
+   GET  /api/tickets/my?state=&severity=&q= -> paginated list rows
+         （owner 视角不含已忽略：低危留存等记录仅运营侧可见，详情对 owner 404）
        {id, ip, port, title, severity, state, sla_due_at, assignee, reopen_count}
        bad state/severity -> 400 {detail, allowed}; page_size default 20 max 100
   GET  /api/tickets/ip-summary?state=&severity=&q= -> {results:
@@ -27,6 +28,7 @@ Tickets (owner-isolated via get_visible_tickets; 404 when not visible):
    POST /api/ops/remind {ids[]} -> 手动提醒邮件 (IsOperator): 按负责人聚合
         成一封; fix_evidence.last_reminded_at 24h 冷却自动跳过并报告;
         无主/已关闭跳过; SMTP 未配置时 sent_emails=0 不标记可重试;
+        首次成功提醒起算 SLA（sla_due_at 为空则按当时严重性策略计算）;
         每张已发工单写审计 ticket.remind; -> 200
         {requested, sent_emails, reminded_tickets, skipped_cooldown,
          skipped_unassigned}
@@ -39,7 +41,8 @@ Tickets (owner-isolated via get_visible_tickets; 404 when not visible):
 Ops pool (operator/leader only; others 403):
    GET  /api/ops/pool?orphan=&unassigned=&state=&severity=&q=&dept=&dept_prefix= -> paginated list
          rows (unassigned: assignee NULL; orphan: unassigned 且 IP 无现任负责人
-         映射；severity 可逗号多选，非法 400；q 模糊匹配 IP/插件名/插件ID/CVE；
+         映射；severity 可逗号多选，非法 400；q 模糊匹配 IP/插件名/插件ID/CVE/
+         负责人用户名/企微账号；
          dept=负责人部门精确匹配完整原串；dept_prefix=前缀匹配一级部门；
          手工派单后同时退出两列，IP 缺口去资产管理补映射）
     GET  /api/ops/pool/export?<pool filters> -> CSV (UTF-8 BOM, cap 10k rows,

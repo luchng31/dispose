@@ -30,11 +30,18 @@ from celery import shared_task
 from django.db import transaction
 from django.utils import timezone
 
-from apps.tickets.models import TicketState, VulnTicket
+from apps.accounts.models import User
+from apps.tickets.models import Severity, TicketState, VulnTicket
 
 from .mapping import FIELD_MAP_VERSION, NormalizedFinding
 
 RETEST_FIXED_UNVERIFIED = "fixed-unverified"
+
+# 低危漏洞治理策略：照常生成工单（一漏一单，记录不删），但导入即转「已忽略」，
+# 不进入待修复/SLA 流程；负责人仍按 IP 映射标注以便追溯。要恢复处理流程，
+# 在工单详情里走「重开」。
+AUTO_IGNORE_LOW_SEVERITY = True
+LOW_IGNORE_REASON = "低危漏洞：按默认策略记录留存，无需修复处理"
 
 
 def dedup_key_for(ip: str, port: int, plugin_id: str, cve: str) -> str:
@@ -124,6 +131,42 @@ def preview_import(
     }
 
 
+def _dispatch_and_classify(created: list[VulnTicket]) -> tuple[int, int]:
+    """Auto-dispatch new tickets by IP owner map; classify states.
+
+    Mirrors manual create: assigned -> 待修复 via the whitelisted edge
+    (audit row per ticket); low severity -> 已忽略 with reason (record
+    kept, no fix workflow); unassigned stays 待分配 (orphan pool).
+    Returns (auto_assigned, low_ignored).
+    """
+    from apps.assets.dispatch import get_current_owner
+    from apps.tickets.transitions import transition
+
+    owner_cache: dict[str, User | None] = {}
+    for ticket in created:
+        if ticket.ip not in owner_cache:
+            owner_cache[ticket.ip] = get_current_owner(ticket.ip)
+        owner = owner_cache[ticket.ip]
+        if owner is not None:
+            ticket.assignee = owner
+    VulnTicket.objects.bulk_update(
+        [t for t in created if t.assignee_id is not None], ["assignee"]
+    )
+    auto_assigned = low_ignored = 0
+    for ticket in created:
+        if ticket.assignee_id is not None:
+            auto_assigned += 1
+        if ticket.severity == Severity.LOW and AUTO_IGNORE_LOW_SEVERITY:
+            transition(
+                ticket, TicketState.IGNORED, actor_role="operator",
+                payload={"reason": LOW_IGNORE_REASON},
+            )
+            low_ignored += 1
+        elif ticket.assignee_id is not None:
+            transition(ticket, TicketState.PENDING_FIX, actor_role="operator")
+    return auto_assigned, low_ignored
+
+
 def apply_reconciliation(
     batch: object,
     findings_by_key: dict[str, NormalizedFinding],
@@ -136,14 +179,17 @@ def apply_reconciliation(
     assert isinstance(batch, ScanBatch)
     now = timezone.now()
     with transaction.atomic():
+        auto_assigned = 0
+        low_ignored = 0
         if rec.new_keys:
-            VulnTicket.objects.bulk_create(
+            created = VulnTicket.objects.bulk_create(
                 [
                     finding_to_ticket(findings_by_key[key], key, now, batch)
                     for key in rec.new_keys
                 ],
                 batch_size=1000,
             )
+            auto_assigned, low_ignored = _dispatch_and_classify(created)
         if rec.still_open_keys:
             VulnTicket.objects.filter(dedup_key__in=rec.still_open_keys).update(
                 last_seen_at=now, batch=batch
@@ -175,6 +221,8 @@ def apply_reconciliation(
             "still_open": len(rec.still_open_keys),
             "fixed_unverified": len(rec.fixed_unverified_keys),
             "reopened": len(rec.reopened_keys),
+            "auto_assigned": auto_assigned,
+            "low_ignored": low_ignored,
             "errors": list(parse_errors),
             "skipped": False,
             "field_map_version": FIELD_MAP_VERSION,

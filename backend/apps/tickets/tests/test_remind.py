@@ -64,6 +64,7 @@ def test_remind_grouped_per_assignee_and_mock_send() -> None:
     t5 = _make_ticket("10.90.0.5", assignee=a1, state=TicketState.CLOSED)
 
     client = _auth("rem_op")
+    VulnTicket.objects.filter(pk__in=[t1.pk, t2.pk, t3.pk, t4.pk, t5.pk]).update(sla_due_at=None)
     with patch("apps.notify.mailer.send_ticket_mail", return_value=1) as mock:
         resp = client.post("/api/ops/remind", {"ids": [t1.pk, t2.pk, t3.pk, t4.pk, t5.pk]}, format="json")
     assert resp.status_code == 200, resp.content
@@ -73,18 +74,26 @@ def test_remind_grouped_per_assignee_and_mock_send() -> None:
     assert resp.data["skipped_unassigned"] == 1
     assert resp.data["skipped_cooldown"] == 0
     assert mock.call_count == 2
-    # each emailed ticket gets last_reminded_at + audit
+    # each emailed ticket gets last_reminded_at + audit + SLA clock started
     from apps.audit.models import AuditLog
 
     for t in (t1, t2, t3):
         t.refresh_from_db()
         assert "last_reminded_at" in t.fix_evidence
+        assert t.sla_due_at is not None  # SLA 自首次提醒起算
     assert AuditLog.objects.filter(action="ticket.remind").count() == 3
+    first_due = t1.sla_due_at
     # unassigned/closed not marked
     t4.refresh_from_db()
     assert "last_reminded_at" not in (t4.fix_evidence or {})
+    assert t4.sla_due_at is None
     t5.refresh_from_db()
     assert "last_reminded_at" not in (t5.fix_evidence or {})
+    # second remind within cooldown: no mail, SLA untouched
+    with patch("apps.notify.mailer.send_ticket_mail", return_value=1):
+        client.post("/api/ops/remind", {"ids": [t1.pk]}, format="json")
+    t1.refresh_from_db()
+    assert t1.sla_due_at == first_due
 
 
 @pytest.mark.django_db
@@ -111,6 +120,7 @@ def test_remind_smtp_off_does_not_mark() -> None:
     t1 = _make_ticket("10.92.0.1", assignee=a1)
 
     client = _auth("rem_op3")
+    VulnTicket.objects.filter(pk=t1.pk).update(sla_due_at=None)
     with patch("apps.notify.mailer.send_ticket_mail", return_value=0) as mock:
         resp = client.post("/api/ops/remind", {"ids": [t1.pk]}, format="json")
     assert resp.data["sent_emails"] == 0
@@ -118,6 +128,7 @@ def test_remind_smtp_off_does_not_mark() -> None:
     assert mock.call_count == 1
     t1.refresh_from_db()
     assert "last_reminded_at" not in (t1.fix_evidence or {})
+    assert t1.sla_due_at is None  # 发送失败 = 未通知 = 不起算
     # retry should still be allowed
     with patch("apps.notify.mailer.send_ticket_mail", return_value=1) as mock2:
         resp2 = client.post("/api/ops/remind", {"ids": [t1.pk]}, format="json")

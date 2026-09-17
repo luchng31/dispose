@@ -102,6 +102,42 @@ def test_same_finding_twice_yields_single_ticket() -> None:
 
 
 @pytest.mark.django_db
+def test_new_tickets_auto_dispatch_by_ip_owner_map() -> None:
+    """FTP/RSAS 新工单按 IP 现任映射自动派单（→待修复）；无映射进无主池；低危自动忽略留痕."""
+    from django.utils import timezone as dj_tz
+
+    from apps.assets.models import Asset, AssetOwnerMap
+
+    owner = _make_user(role="owner")
+    owner.username = "mx_dispatch_owner"
+    owner.save()
+    now = dj_tz.now()
+    Asset.objects.create(ip=ROW_A["ip"])
+    AssetOwnerMap.objects.create(ip_id=ROW_A["ip"], user=owner, valid_from=now)
+    Asset.objects.create(ip="192.168.1.12")
+    AssetOwnerMap.objects.create(ip_id="192.168.1.12", user=owner, valid_from=now)
+
+    client = _client_for(_make_user())
+    row_low = dict(ROW_A, ip="192.168.1.12", plugin_id="1003", cve="CVE-2024-9999", severity="低危")
+    payload = _vuln_xml(_row(**ROW_A) + _row(**ROW_B) + _row(**row_low))
+    resp = _post(client, payload, "scan.xml", dry_run=False)
+    assert resp.status_code == 201  # type: ignore[attr-defined]
+    assert resp.data["stats"]["auto_assigned"] == 2  # type: ignore[attr-defined]
+    assert resp.data["stats"]["low_ignored"] == 1  # type: ignore[attr-defined]
+
+    mapped = VulnTicket.objects.get(ip=ROW_A["ip"])
+    assert mapped.assignee_id == owner.pk
+    assert mapped.state == TicketState.PENDING_FIX
+    orphan = VulnTicket.objects.get(ip=ROW_B["ip"])
+    assert orphan.assignee_id is None
+    assert orphan.state == TicketState.PENDING_ASSIGN
+    low = VulnTicket.objects.get(ip="192.168.1.12")
+    assert low.state == TicketState.IGNORED
+    assert "低危" in low.ignore_reason
+    assert low.assignee_id == owner.pk
+
+
+@pytest.mark.django_db
 def test_rescan_missing_marks_fixed_unverified_never_autoclose() -> None:
     client = _client_for(_make_user())
     _post(client, _vuln_xml(_row(**ROW_A) + _row(**ROW_B)), "full.xml", dry_run=False)

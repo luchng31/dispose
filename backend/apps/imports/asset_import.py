@@ -5,6 +5,7 @@ import io
 import re
 from typing import Any
 
+from django.db import transaction
 from django.utils import timezone
 from django.utils.crypto import get_random_string
 from openpyxl import load_workbook
@@ -268,6 +269,7 @@ def _apply_one(
             )
 
 
+@transaction.atomic
 def apply_asset_rows(rows: list[dict[str, str]], sync: bool = False) -> dict[str, Any]:
     """Upsert assets + owner map + provision users + dispatch.
 
@@ -275,6 +277,9 @@ def apply_asset_rows(rows: list[dict[str, str]], sync: bool = False) -> dict[str
     IPs absent from the sheet get their current owner map closed (asset stays,
     becomes ownerless, open tickets re-dispatch to the orphan pool) and
     DeptLeaderMap is rebuilt from the sheet. sync=False is additive-only.
+
+    Atomic: a mid-import crash rolls back EVERYTHING instead of leaving
+    half-written maps/users behind (observed as phantom mappings after 500s).
     """
     summary: dict[str, Any] = {
         "created_assets": 0, "updated_assets": 0, "created_users": [],

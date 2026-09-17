@@ -65,6 +65,8 @@ sudo -u vuln /opt/vuln-ticket/.venv/bin/pip install -q -r /opt/vuln-ticket/backe
 sudo -u vuln bash -c 'set -a; . /opt/vuln-ticket/.env; set +a; cd /opt/vuln-ticket/backend && /opt/vuln-ticket/.venv/bin/python manage.py migrate --noinput'
 sudo -u vuln bash -c 'set -a; . /opt/vuln-ticket/.env; set +a; cd /opt/vuln-ticket/backend && /opt/vuln-ticket/.venv/bin/python manage.py collectstatic --noinput'
 sudo rsync -a --delete /opt/vuln-ticket/frontend/dist/ /var/www/vuln/
+# 源文件可能是 600（如聊天工具下载的图片），rsync -a 会原样保留，nginx worker 读不了 → 403
+sudo chmod -R a+rX /var/www/vuln
 sudo systemctl restart vuln-api vuln-worker vuln-beat
 sudo systemctl reload nginx
 "
